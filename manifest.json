@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "IndiaMart Buy Leads Automation",
+  "version": "0.1.0",
+  "description": "Automate buy lead polling from seller.indiamart.com",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://seller.indiamart.com/*"
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "side_panel": {
+    "default_path": "dist/index.html"
+  },
+  "action": {
+    "default_title": "Buy Leads Automation",
+    "default_popup": "dist/index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://seller.indiamart.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
