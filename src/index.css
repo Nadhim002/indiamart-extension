@@ -126,7 +126,7 @@ input[type='number']:disabled {
 
 .badge.idle {
   background-color: #e8f0fe;
-  color: #1a73e8;
+  color: #040f1c;
 }
 
 .badge.active {
