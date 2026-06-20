@@ -28,8 +28,34 @@ function addLog(level, message) {
 
 // Utility: Find active tab on seller.indiamart.com
 async function getActiveSellerTab() {
-  const tabs = await chrome.tabs.query({ url: '*://seller.indiamart.com/*' });
-  return tabs.length > 0 ? tabs[0] : null;
+  const activeTabs = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+    url: '*://seller.indiamart.com/*'
+  });
+  if (activeTabs.length > 0) {
+    return activeTabs[0];
+  }
+
+  const allTabs = await chrome.tabs.query({ url: '*://seller.indiamart.com/*' });
+  return allTabs.length > 0 ? allTabs[0] : null;
+}
+
+async function ensureContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { action: '__ping__' });
+  } catch (error) {
+    const message = chrome.runtime.lastError?.message || error?.message || '';
+    if (message.includes('Receiving end does not exist')) {
+      addLog('WARN', `Content script missing in tab ${tabId}; injecting content script.`);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js']
+      });
+      return;
+    }
+    throw error;
+  }
 }
 
 // Main polling function
@@ -47,6 +73,8 @@ async function callGetBLDisplayData() {
       return;
     }
 
+    await ensureContentScript(tab.id);
+
     // Send message to content script
     const response = await chrome.tabs.sendMessage(tab.id, {
       action: 'fetch_bldisplaydata'
@@ -63,9 +91,12 @@ async function callGetBLDisplayData() {
       pollingState.last_error = response.error;
       addLog('ERROR', `API Error: ${response.error}`);
 
-      // Check if session expired
-      if (response.code !== '200' || response.error.includes('Session')) {
-        stopPolling('Session expired or invalid response');
+      // Only stop polling on real API errors (code 200+ or session expired)
+      // Do NOT stop on pending glusrid or other non-API errors
+      if ((response.code && response.code !== 'PENDING_GLUSRID') || response.error.includes('Session')) {
+        if (response.code !== '200' && response.code !== 'PENDING_GLUSRID') {
+          stopPolling('Session expired or invalid response');
+        }
       }
       notifyPanelUpdate();
     }

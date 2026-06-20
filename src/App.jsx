@@ -6,6 +6,8 @@ import LogsPanel from './components/LogsPanel.jsx';
 const DEFAULT_INTERVAL = 5;
 
 function App() {
+
+    console.log('Stored glusrid:', stored);
   const [intervalSeconds, setIntervalSeconds] = useState(DEFAULT_INTERVAL);
   const [state, setState] = useState({
     active: false,

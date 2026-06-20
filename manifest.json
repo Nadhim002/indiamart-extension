@@ -5,7 +5,8 @@
   "description": "Automate buy lead polling from seller.indiamart.com",
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "scripting"
   ],
   "host_permissions": [
     "*://seller.indiamart.com/*"
