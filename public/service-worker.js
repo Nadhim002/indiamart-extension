@@ -87,7 +87,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 offer: "",
                 offer_type: "B",
                 start: 1,
-                end: 20,
+                end: 200,
                 UsageTyp: "",
                 quantity: "",
                 is_email: "",
@@ -105,22 +105,22 @@ chrome.alarms.onAlarm.addListener((alarm) => {
             const data = await response.json();
 
             // Helpers to convert values into numbers
-            const priceMap = {
-              'Above 1,000': 1000,
-              'Above 10,000': 10000,
-              'Above 1 Lakh': 100000,
-              'Above 5 Lakh': 500000,
-            };
-
             function parsePrice(v) {
               if (v == null) return null;
               if (typeof v === 'number') return v;
-              if (priceMap[v]) return priceMap[v];
-              const s = String(v).toLowerCase().replace(/,/g, '').trim();
-              if (s.includes('lakh')) {
-                const n = parseFloat(s.match(/(\d+(?:\.\d+)?)/)?.[0]);
-                return isNaN(n) ? null : Math.round(n * 100000);
-              }
+              let s = String(v).toLowerCase().trim();
+              // remove common currency symbols, commas and words
+              s = s.replace(/[,₹$€£]/g, '').replace(/rs\.?/g, '').replace(/above|approx|around|more than|greater than|>/g, '').trim();
+
+              // handle lakh / lac (e.g., '1.5 lakh', '1 Lakh')
+              const lakhMatch = s.match(/(\d+(?:\.\d+)?)\s*(lakh|lac)/);
+              if (lakhMatch) return Math.round(parseFloat(lakhMatch[1]) * 100000);
+
+              // handle 'k' or thousand (e.g., '10k', '10 K', '10 thousand')
+              const kMatch = s.match(/(\d+(?:\.\d+)?)\s*(k|thousand)/);
+              if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1000);
+
+              // fallback: extract first number
               const m = s.match(/(\d+(?:\.\d+)?)/);
               return m ? Number(m[0]) : null;
             }
@@ -142,14 +142,27 @@ chrome.alarms.onAlarm.addListener((alarm) => {
               return m ? Number(m[0]) : null;
             }
 
+            function parseQuantity(v) {
+              if (v == null) return null;
+              if (typeof v === 'number') return Math.round(v);
+              let s = String(v).replace(/\u00A0/g, ' ').trim();
+              const m = s.match(/(\d[\d,\.]*)/);
+              if (!m) return null;
+              const numStr = m[1].replace(/,/g, '');
+              const n = parseFloat(numStr);
+              return isNaN(n) ? null : Math.round(n);
+            }
+
             const mappedData = data.DisplayList.map((item) => {
-              let quantity = 0;
+              let quantity = null;
               try {
                 const enrichment = JSON.parse(item.ENRICHMENTINFO || '{}');
+                console.log('Enrichment Info:', enrichment);
                 const q = enrichment['1']?.find((e) => e.DESC == 'Quantity')?.RESPONSE;
-                quantity = q == null ? 0 : (Number(String(q).replace(/,/g, '')) || 0);
+                console.log('q Info:', q);
+                quantity = parseQuantity(q);
               } catch (e) {
-                quantity = 0;
+                quantity = null;
               }
 
               return {
