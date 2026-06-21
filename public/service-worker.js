@@ -104,7 +104,64 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
             const data = await response.json();
 
-            const mappedData = data.DisplayList.map((item) => ({ ETO_OFR_ID: item.ETO_OFR_ID, ETO_OFR_TITLE: item.ETO_OFR_TITLE, BLDATETIME: item.BLDATETIME, ETO_OFR_APPROX_ORDER_VALUE: item.ETO_OFR_APPROX_ORDER_VALUE, quantity: JSON.parse(item.ENRICHMENTINFO)['1']?.find( item => item.DESC == 'Quantity')?.RESPONSE ?? 0 , GLUSR_CITY: item.GLUSR_CITY, GLUSR_STATE: item.GLUSR_STATE }));
+            // Helpers to convert values into numbers
+            const priceMap = {
+              'Above 1,000': 1000,
+              'Above 10,000': 10000,
+              'Above 1 Lakh': 100000,
+              'Above 5 Lakh': 500000,
+            };
+
+            function parsePrice(v) {
+              if (v == null) return null;
+              if (typeof v === 'number') return v;
+              if (priceMap[v]) return priceMap[v];
+              const s = String(v).toLowerCase().replace(/,/g, '').trim();
+              if (s.includes('lakh')) {
+                const n = parseFloat(s.match(/(\d+(?:\.\d+)?)/)?.[0]);
+                return isNaN(n) ? null : Math.round(n * 100000);
+              }
+              const m = s.match(/(\d+(?:\.\d+)?)/);
+              return m ? Number(m[0]) : null;
+            }
+
+            function parseTimeToMinutes(v) {
+              if (v == null) return null;
+              const s = String(v).toLowerCase().replace(/[()]/g, '').trim();
+              if (s.includes('yesterday')) return 1440;
+              if (s.includes('hr') || s.includes('hrs')) {
+                const n = parseFloat(s.match(/(\d+(?:\.\d+)?)/)?.[0]);
+                return isNaN(n) ? null : Math.round(n * 60);
+              }
+              if (s.includes('min') || s.includes('mins')) {
+                const n = parseFloat(s.match(/(\d+(?:\.\d+)?)/)?.[0]);
+                return isNaN(n) ? null : Math.round(n);
+              }
+              if (s.includes('sec') || s.includes('secs')) return 0;
+              const m = s.match(/(\d+(?:\.\d+)?)/);
+              return m ? Number(m[0]) : null;
+            }
+
+            const mappedData = data.DisplayList.map((item) => {
+              let quantity = 0;
+              try {
+                const enrichment = JSON.parse(item.ENRICHMENTINFO || '{}');
+                const q = enrichment['1']?.find((e) => e.DESC == 'Quantity')?.RESPONSE;
+                quantity = q == null ? 0 : (Number(String(q).replace(/,/g, '')) || 0);
+              } catch (e) {
+                quantity = 0;
+              }
+
+              return {
+                ETO_OFR_ID: item.ETO_OFR_ID,
+                ETO_OFR_TITLE: item.ETO_OFR_TITLE,
+                BLDATETIME: parseTimeToMinutes(item.BLDATETIME),
+                ETO_OFR_APPROX_ORDER_VALUE: parsePrice(item.ETO_OFR_APPROX_ORDER_VALUE),
+                quantity,
+                GLUSR_CITY: item.GLUSR_CITY,
+                GLUSR_STATE: item.GLUSR_STATE,
+              };
+            });
 
             console.table(mappedData);
 
