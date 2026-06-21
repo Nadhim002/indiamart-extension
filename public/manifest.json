@@ -7,8 +7,12 @@
     "sidePanel",
     "scripting",
     "tabs",
-    "activeTab"
+    "activeTab",
+    "alarms"
   ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
   "action": {
     "default_title": "Indiamart Side Panel",
     "default_popup": "panel.html"
