@@ -104,7 +104,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
             const data = await response.json();
 
-            console.log('Fetched data:', data);
+            console.log('Fetched data:', data.DisplayList );
 
             const tableToLog = { result, time: new Date().toLocaleString(), stae: document.visibilityState };
             console.table(tableToLog); if (result && typeof result.then === 'function') {
