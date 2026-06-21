@@ -52,11 +52,77 @@ body {
   margin: 20px 0;
 }
 
+.filter-grid {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
 .input-group label {
   font-size: 0.875rem;
   font-weight: 600;
   color: #1f2937;
   text-align: left;
+}
+
+.select-input {
+  min-height: 120px;
+}
+
+.multi-select-group {
+  position: relative;
+}
+
+.dropdown-button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  background: white;
+  text-align: left;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.dropdown-button:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+  z-index: 10;
+}
+
+.dropdown-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dropdown-option input {
+  accent-color: #2563eb;
+}
+
+.dropdown-option:hover {
+  background: #f8fafc;
+}
+
+.input-group small {
+  color: #4b5563;
+  font-size: 0.75rem;
 }
 
 .time-input {

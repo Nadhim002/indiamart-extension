@@ -3,12 +3,41 @@ import './global.css';
 
 export default function App() {
   const [inputSeconds, setInputSeconds] = useState('3');
+  const [minPrice, setMinPrice] = useState('');
+  const [minQuantity, setMinQuantity] = useState('');
+  const [minTimePassed, setMinTimePassed] = useState('');
+  const [selectedStates, setSelectedStates] = useState([]);
+  const [statesDropdownOpen, setStatesDropdownOpen] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [cycleCount, setCycleCount] = useState(0);
   const [activeUrl, setActiveUrl] = useState('');
   const [nextFireTime, setNextFireTime] = useState(null);
   const timerRef = useRef(null);
+  const stateDropdownRef = useRef(null);
+
+  const stateOptions = ['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal']
+
+  const toggleStateSelection = (state) => {
+    setSelectedStates((current) =>
+      current.includes(state)
+        ? current.filter((value) => value !== state)
+        : [...current, state]
+    );
+  };
+
+  const closeStateDropdown = () => setStatesDropdownOpen(false);
+
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (stateDropdownRef.current && !stateDropdownRef.current.contains(event.target)) {
+        closeStateDropdown();
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   useEffect(() => {
     refreshBackgroundState();
@@ -20,7 +49,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-   const formatTime = (seconds) => {
+  const formatTime = (seconds) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
@@ -37,12 +66,22 @@ export default function App() {
   };
 
   const handleStart = () => {
-    const seconds = parseInt(inputSeconds) || 0;
+    const seconds = parseInt(inputSeconds, 10) || 0;
     if (seconds > 0) {
+      const minPriceValue = minPrice.trim() ? Number(minPrice) : null;
+      const minQuantityValue = minQuantity.trim() ? Number(minQuantity) : null;
+      const minTimePassedValue = minTimePassed.trim() ? Number(minTimePassed) : null;
+      const filters = {
+        minPrice: Number.isFinite(minPriceValue) ? minPriceValue : null,
+        minQuantity: Number.isFinite(minQuantityValue) ? minQuantityValue : null,
+        minTimePassed: Number.isFinite(minTimePassedValue) ? minTimePassedValue : null,
+        states: selectedStates.length ? selectedStates : null,
+      };
+
       setTimeLeft(seconds);
       setIsRunning(true);
       setCycleCount(0);
-      sendBackgroundCommand('START_TIMER', { seconds });
+      sendBackgroundCommand('START_TIMER', { seconds, filters });
     }
   };
 
@@ -102,6 +141,80 @@ export default function App() {
             disabled={isRunning}
             className="time-input"
           />
+        </div>
+
+        <div className="filter-grid">
+          <div className="input-group">
+            <label htmlFor="minPrice">Min price for good lead</label>
+            <input
+              id="minPrice"
+              type="number"
+              min="0"
+              step="1"
+              value={minPrice}
+              onChange={(e) => setMinPrice(e.target.value)}
+              disabled={isRunning}
+              className="time-input"
+            />
+          </div>
+
+          <div className="input-group">
+            <label htmlFor="minQuantity">Min quantity for good lead</label>
+            <input
+              id="minQuantity"
+              type="number"
+              min="0"
+              step="1"
+              value={minQuantity}
+              onChange={(e) => setMinQuantity(e.target.value)}
+              disabled={isRunning}
+              className="time-input"
+            />
+          </div>
+
+          <div className="input-group">
+            <label htmlFor="minTimePassed">Min time passed for good lead (minutes)</label>
+            <input
+              id="minTimePassed"
+              type="number"
+              min="0"
+              step="1"
+              value={minTimePassed}
+              onChange={(e) => setMinTimePassed(e.target.value)}
+              disabled={isRunning}
+              className="time-input"
+            />
+          </div>
+
+          <div className="input-group multi-select-group" ref={stateDropdownRef}>
+            <label htmlFor="states">Filter by state (optional)</label>
+            <button
+              type="button"
+              className="dropdown-button"
+              onClick={() => setStatesDropdownOpen((open) => !open)}
+              disabled={isRunning}
+              aria-expanded={statesDropdownOpen}
+            >
+              {selectedStates.length > 0
+                ? `${selectedStates.length} selected`
+                : 'Any state'}
+            </button>
+            {statesDropdownOpen && (
+              <div className="dropdown-menu">
+                {stateOptions.map((state) => (
+                  <label className="dropdown-option" key={state}>
+                    <input
+                      type="checkbox"
+                      checked={selectedStates.includes(state)}
+                      onChange={() => toggleStateSelection(state)}
+                    />
+                    <span>{state}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <small>If no states are selected, state filtering is disabled.</small>
+          </div>
         </div>
 
         <div className="button-group">
