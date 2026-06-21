@@ -23,16 +23,11 @@ export default function App() {
 
   const runFunctionAndRestart = () => {
     setCycleCount((prev) => prev + 1);
-    executeFunction();
     // Auto-restart timer
     const seconds = parseInt(inputSeconds) || 0;
     if (seconds > 0) {
       setTimeLeft(seconds);
     }
-  };
-
-  const executeFunction = () => {
-    // No-op in panel; execution now managed by the background service worker.
   };
 
   const handleStart = () => {
@@ -83,45 +78,45 @@ export default function App() {
     });
   };
 
-  return (
-    <main className="panel-root">
-      <h1>Timer</h1>
-      
-      <div className="timer-container">
-        <div className="timer-display">{formatTime(timeLeft)}</div>
-        
-        <div className="input-group">
-          <label htmlFor="seconds">Seconds:</label>
-          <input
-            id="seconds"
-            type="number"
-            min="1"
-            value={inputSeconds}
-            onChange={(e) => setInputSeconds(e.target.value)}
-            disabled={isRunning}
-            className="time-input"
-          />
-        </div>
+  return
+  <main className="panel-root">
+    <h1>Timer</h1>
 
-        <div className="button-group">
-          <button onClick={handleStart} disabled={isRunning} className="btn btn-start">
-            Start
-          </button>
-          <button onClick={handleStop} disabled={!isRunning} className="btn btn-stop">
-            Stop
-          </button>
-          <button onClick={handleReset} className="btn btn-reset">
-            Reset
-          </button>
-        </div>
+    <div className="timer-container">
+      <div className="timer-display">{formatTime(timeLeft)}</div>
 
-        <div className="cycle-info">
-          <p>Cycles completed: <strong>{cycleCount}</strong></p>
-          <p>Status: <strong>{isRunning ? 'Running' : 'Stopped'}</strong></p>
-          {activeUrl && <p>Target tab: <strong>{activeUrl}</strong></p>}
-          {nextFireTime && <p>Next update in: <strong>{Math.max(0, Math.ceil((nextFireTime - Date.now()) / 1000))}s</strong></p>}
-        </div>
+      <div className="input-group">
+        <label htmlFor="seconds">Seconds:</label>
+        <input
+          id="seconds"
+          type="number"
+          min="1"
+          value={inputSeconds}
+          onChange={(e) => setInputSeconds(e.target.value)}
+          disabled={isRunning}
+          className="time-input"
+        />
       </div>
-    </main>
-  );
+
+      <div className="button-group">
+        <button onClick={handleStart} disabled={isRunning} className="btn btn-start">
+          Start
+        </button>
+        <button onClick={handleStop} disabled={!isRunning} className="btn btn-stop">
+          Stop
+        </button>
+        <button onClick={handleReset} className="btn btn-reset">
+          Reset
+        </button>
+      </div>
+
+      <div className="cycle-info">
+        <p>Cycles completed: <strong>{cycleCount}</strong></p>
+        <p>Status: <strong>{isRunning ? 'Running' : 'Stopped'}</strong></p>
+        {activeUrl && <p>Target tab: <strong>{activeUrl}</strong></p>}
+        {nextFireTime && <p>Next update in: <strong>{Math.max(0, Math.ceil((nextFireTime - Date.now()) / 1000))}s</strong></p>}
+      </div>
+    </div>
+  </main>
+
 }
