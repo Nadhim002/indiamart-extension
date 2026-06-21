@@ -104,7 +104,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
             const data = await response.json();
 
-            console.log('Fetched data:', data.DisplayList );
+            const mappedData = data.DisplayList.map((item) => ({ ETO_OFR_ID: item.ETO_OFR_ID, ETO_OFR_TITLE: item.ETO_OFR_TITLE, BLDATETIME: item.BLDATETIME, ETO_OFR_APPROX_ORDER_VALUE: item.ETO_OFR_APPROX_ORDER_VALUE, quantity: JSON.parse(item.ENRICHMENTINFO)['1']?.find( item => item.DESC == 'Quantity')?.RESPONSE ?? 0 , GLUSR_CITY: item.GLUSR_CITY, GLUSR_STATE: item.GLUSR_STATE }));
+
+            console.table(mappedData);
 
             const tableToLog = { result, time: new Date().toLocaleString(), stae: document.visibilityState };
             console.table(tableToLog); if (result && typeof result.then === 'function') {

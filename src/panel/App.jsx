@@ -3,7 +3,7 @@ import './global.css';
 import { formatTime } from '../Utils.js';
 
 export default function App() {
-  const [inputSeconds, setInputSeconds] = useState('5');
+  const [inputSeconds, setInputSeconds] = useState('3');
   const [timeLeft, setTimeLeft] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [cycleCount, setCycleCount] = useState(0);
