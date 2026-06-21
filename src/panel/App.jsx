@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import './global.css';
+import { formatTime } from '../Utils.js';
 
 export default function App() {
-  const [inputSeconds, setInputSeconds] = useState('60');
+  const [inputSeconds, setInputSeconds] = useState('5');
   const [timeLeft, setTimeLeft] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [cycleCount, setCycleCount] = useState(0);
@@ -52,14 +53,9 @@ export default function App() {
     try {
       if (typeof fetchGlidScriptJSFile === 'function') {
         const result = fetchGlidScriptJSFile();
-        console.log('[Timer Extension] Executed fetchGlidScriptJSFile, returned:', result);
+        const tableToLog = {result , time : new Date().toLocaleString() , stae : document.visibilityState};
+        console.table(tableToLog);
         
-        // Handle if it returns a Promise
-        if (result && typeof result.then === 'function') {
-          result.catch((err) => {
-            console.error('[Timer Extension] Promise error:', err);
-          });
-        }
       } else {
         console.warn('[Timer Extension] fetchGlidScriptJSFile not found');
       }
@@ -86,13 +82,6 @@ export default function App() {
     setIsRunning(false);
     setTimeLeft(0);
     setCycleCount(0);
-  };
-
-  const formatTime = (seconds) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
   return (
