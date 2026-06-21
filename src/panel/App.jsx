@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import './global.css';
-import { formatTime } from '../Utils.js';
 
 export default function App() {
   const [inputSeconds, setInputSeconds] = useState('3');
@@ -20,6 +19,13 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, []);
+
+   const formatTime = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   const runFunctionAndRestart = () => {
     setCycleCount((prev) => prev + 1);
