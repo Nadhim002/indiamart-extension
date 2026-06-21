@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Indiamart Side Panel",
+  "version": "1.0.0",
+  "description": "Chrome extension with a side panel showing Hello World.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "sidePanel"
+  ],
+  "action": {
+    "default_title": "Indiamart Side Panel"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  }
+}
