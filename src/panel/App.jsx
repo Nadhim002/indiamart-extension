@@ -15,6 +15,7 @@ export default function App() {
   const [nextFireTime, setNextFireTime] = useState(null);
   const timerRef = useRef(null);
   const stateDropdownRef = useRef(null);
+  const settingsLoadedRef = useRef(false);
 
   const stateOptions = ['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal']
 
@@ -27,6 +28,23 @@ export default function App() {
   };
 
   const closeStateDropdown = () => setStatesDropdownOpen(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('im-extension-settings') || '{}');
+      if (saved.inputSeconds !== undefined) setInputSeconds(saved.inputSeconds);
+      if (saved.minPrice !== undefined) setMinPrice(saved.minPrice);
+      if (saved.minQuantity !== undefined) setMinQuantity(saved.minQuantity);
+      if (saved.minTimePassed !== undefined) setMinTimePassed(saved.minTimePassed);
+      if (saved.selectedStates !== undefined) setSelectedStates(saved.selectedStates);
+    } catch {}
+    settingsLoadedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!settingsLoadedRef.current) return;
+    localStorage.setItem('im-extension-settings', JSON.stringify({ inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates }));
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates]);
 
   useEffect(() => {
     const handleOutsideClick = (event) => {
