@@ -6,6 +6,7 @@ export default function App() {
   const [minPrice, setMinPrice] = useState('');
   const [minQuantity, setMinQuantity] = useState('');
   const [minTimePassed, setMinTimePassed] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [selectedStates, setSelectedStates] = useState([]);
   const [statesDropdownOpen, setStatesDropdownOpen] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
@@ -37,14 +38,15 @@ export default function App() {
       if (saved.minQuantity !== undefined) setMinQuantity(saved.minQuantity);
       if (saved.minTimePassed !== undefined) setMinTimePassed(saved.minTimePassed);
       if (saved.selectedStates !== undefined) setSelectedStates(saved.selectedStates);
+      if (saved.phoneNumber !== undefined) setPhoneNumber(saved.phoneNumber);
     } catch {}
     settingsLoadedRef.current = true;
   }, []);
 
   useEffect(() => {
     if (!settingsLoadedRef.current) return;
-    localStorage.setItem('im-extension-settings', JSON.stringify({ inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates }));
-  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates]);
+    localStorage.setItem('im-extension-settings', JSON.stringify({ inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, phoneNumber }));
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, phoneNumber]);
 
   useEffect(() => {
     const handleOutsideClick = (event) => {
@@ -99,7 +101,7 @@ export default function App() {
       setTimeLeft(seconds);
       setIsRunning(true);
       setCycleCount(0);
-      sendBackgroundCommand('START_TIMER', { seconds, filters });
+      sendBackgroundCommand('START_TIMER', { seconds, filters, phoneNumber });
     }
   };
 
@@ -158,6 +160,19 @@ export default function App() {
             onChange={(e) => setInputSeconds(e.target.value)}
             disabled={isRunning}
             className="time-input"
+          />
+        </div>
+
+        <div className="input-group">
+          <label htmlFor="phoneNumber">Your mobile number</label>
+          <input
+            id="phoneNumber"
+            type="tel"
+            value={phoneNumber}
+            onChange={(e) => setPhoneNumber(e.target.value)}
+            disabled={isRunning}
+            className="time-input"
+            placeholder="e.g. 9842142030"
           />
         </div>
 

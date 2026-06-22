@@ -5,6 +5,9 @@ let timerRunning = false;
 let nextFireTime = null;
 let cycleCount = 0;
 let activeFilters = null;
+let activePhoneNumber = null;
+
+const ENABLE_LEAD_BUYING = true; ;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
@@ -17,6 +20,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       timerRunning = true;
       cycleCount = 0;
       activeFilters = message.filters || null;
+      activePhoneNumber = message.phoneNumber || null;
       nextFireTime = Date.now() + timerSeconds * 1000;
       scheduleAlarm();
       sendResponse({ ok: true, nextFireTime, cycleCount });
@@ -68,8 +72,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       chrome.scripting.executeScript({
         target: { tabId: activeTabId },
         world: 'MAIN',
-        args: [activeFilters],
-        func: async (filters) => {
+        args: [activeFilters, activePhoneNumber, ENABLE_LEAD_BUYING],
+        func: async (filters, phoneNumber, enableLeadBuying) => {
           try {
             if (typeof fetchGlidScriptJSFile === 'function') {
 
@@ -166,6 +170,78 @@ chrome.alarms.onAlarm.addListener((alarm) => {
               const filteredLeads = window.__im_utils.filterLeads(mappedData, filters);
               console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed`);
               console.table(filteredLeads);
+
+              console.log(`[Purchase] Lead buying is ${enableLeadBuying ? 'enabled' : 'disabled'}`);
+
+              if (enableLeadBuying) {
+                const now = new Date();
+                const ptime = `${String(now.getDate()).padStart(2,'0')}-${String(now.getMonth()+1).padStart(2,'0')}-${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+
+                const purchaseResults = await Promise.allSettled(
+                  filteredLeads.map((lead, index) =>
+                    fetch(
+                      'https://seller.indiamart.com/blreact/contactBuyNow',
+                      {
+                        method: 'POST',
+                        mode: 'cors',
+                        credentials: 'include',
+                        referrer: 'https://seller.indiamart.com/bltxn/?pref=relevant',
+                        headers: {
+                          accept: '*/*',
+                          'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+                          'cache-control': 'no-cache',
+                          'content-type': 'application/json',
+                          pragma: 'no-cache',
+                          'sec-ch-ua': '"Brave";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+                          'sec-ch-ua-mobile': '?0',
+                          'sec-ch-ua-platform': '"macOS"',
+                          'sec-fetch-dest': 'empty',
+                          'sec-fetch-mode': 'cors',
+                          'sec-fetch-site': 'same-origin',
+                          'sec-gpc': '1',
+                          'x-requested-with': 'XMLHttpRequest',
+                        },
+                        body: JSON.stringify({
+                          glusrId: String(result),
+                          ofrid: String(lead.ETO_OFR_ID),
+                          purchasemod: 'WEB',
+                          count: index + 1,
+                          tsearch_text: 'latestbl_relevant_f_loc_ST',
+                          serial: index + 1,
+                          responseTextArea: 0,
+                          bl_page_location: 'page=relevant#city=#mcatid=#locpref=',
+                          matched_mcat_id: String(lead.FK_GLCAT_MCAT_ID),
+                          order_value_flag: '',
+                          is_bulk_order: '',
+                          ofrtitle: lead.ETO_OFR_TITLE,
+                          mapped_mcat_id: String(lead.FK_GLCAT_MCAT_ID),
+                          GRID_PARAMETERS: lead.GRID_PARAMETERS,
+                          mobile_no: phoneNumber,
+                          ptime,
+                          pref: 'https://seller.indiamart.com/bltxn/?pref=relevant',
+                          grid_lead_pos: index + 1,
+                          NIClick: 1,
+                        }),
+                      }
+                    ).then((res) => res.text()).then((text) => {
+                        try { return { lead, data: text ? JSON.parse(text) : null }; }
+                        catch { return { lead, data: text || null }; }
+                      })
+                  )
+                );
+
+                const purchaseData = purchaseResults.map((outcome, i) => {
+                  if (outcome.status === 'fulfilled') {
+                    console.log(`[Purchase] ${outcome.value.lead.ETO_OFR_ID} - ${outcome.value.lead.ETO_OFR_TITLE}`, outcome.value.data);
+                    return outcome.value;
+                  } else {
+                    console.error(`[Purchase] Failed for ${filteredLeads[i].ETO_OFR_ID}:`, outcome.reason);
+                    return { lead: filteredLeads[i], data: null, error: outcome.reason?.message };
+                  }
+                });
+
+                console.table(purchaseData.map(({ lead, data }) => ({ ofrid: lead.ETO_OFR_ID, title: lead.ETO_OFR_TITLE, response: JSON.stringify(data) })));
+              }
 
               console.table({
                 result,
