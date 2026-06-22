@@ -4,6 +4,7 @@ let timerSeconds = 0;
 let timerRunning = false;
 let nextFireTime = null;
 let cycleCount = 0;
+let activeFilters = null;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
@@ -15,6 +16,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       timerSeconds = message.seconds || 0;
       timerRunning = true;
       cycleCount = 0;
+      activeFilters = message.filters || null;
       nextFireTime = Date.now() + timerSeconds * 1000;
       scheduleAlarm();
       sendResponse({ ok: true, nextFireTime, cycleCount });
@@ -66,7 +68,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       chrome.scripting.executeScript({
         target: { tabId: activeTabId },
         world: 'MAIN',
-        func: async () => {
+        args: [activeFilters],
+        func: async (filters) => {
           try {
             if (typeof fetchGlidScriptJSFile === 'function') {
 
@@ -152,11 +155,17 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                     ),
                   quantity,
                   GLUSR_CITY: item.GLUSR_CITY,
-                  GLUSR_STATE: item.GLUSR_STATE
+                  GLUSR_STATE: item.GLUSR_STATE,
+                  FK_GLCAT_MCAT_ID : item.FK_GLCAT_MCAT_ID,
+                  GRID_PARAMETERS : item.GRID_PARAMETERS
                 };
               });
 
-              console.table(mappedData);
+              // console.table(mappedData);
+
+              const filteredLeads = window.__im_utils.filterLeads(mappedData, filters);
+              console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed`);
+              console.table(filteredLeads);
 
               console.table({
                 result,

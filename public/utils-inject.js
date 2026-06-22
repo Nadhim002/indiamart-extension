@@ -44,5 +44,31 @@
     return isNaN(n) ? null : Math.round(n);
   }
 
-  window.__im_utils = { parsePrice, parseTimeToMinutes, parseQuantity };
+  function filterLeads(leads, filters) {
+    if (!filters) return leads;
+    const { minPrice, minQuantity, minTimePassed, states } = filters;
+
+    return leads.filter((lead) => {
+      // Price OR Quantity — skip this check if neither threshold is configured
+      if (minPrice != null || minQuantity != null) {
+        const priceOk = minPrice != null && lead.ETO_OFR_APPROX_ORDER_VALUE != null && lead.ETO_OFR_APPROX_ORDER_VALUE >= minPrice;
+        const quantityOk = minQuantity != null && lead.quantity != null && lead.quantity >= minQuantity;
+        if (!priceOk && !quantityOk) return false;
+      }
+
+      // Time passed — lead must have been posted within minTimePassed minutes
+      if (minTimePassed != null && minTimePassed > 0) {
+        if (lead.BLDATETIME == null || lead.BLDATETIME > minTimePassed) return false;
+      }
+
+      // State — lead's state must be in the selected list
+      if (states && states.length > 0) {
+        if (!states.includes(lead.GLUSR_STATE)) return false;
+      }
+
+      return true;
+    });
+  }
+
+  window.__im_utils = { parsePrice, parseTimeToMinutes, parseQuantity, filterLeads };
 })();
