@@ -1,3 +1,13 @@
+import { initializeApp, getApps } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { getDatabase, ref, push } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { FIREBASE_CONFIG } from './firebase-config.js';
+
+const app = getApps().length === 0 ? initializeApp(FIREBASE_CONFIG) : getApps()[0];
+const auth = getAuth(app);
+const db = getDatabase(app);
+signInAnonymously(auth).catch(e => console.error('[SW] Firebase auth failed', e));
+
 const DB_NAME = 'indiamart_leads';
 const DB_VERSION = 1;
 const STORE_NAME = 'leads';
@@ -386,6 +396,18 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 filtersAtFirstSeen: filtersSnapshot
               }).catch((err) => console.error('[DB] upsertLead failed:', err));
             });
+
+            if (ENABLE_LEAD_BUYING) {
+              const purchasedLeads = mappedData.filter(l => filteredSet.has(l.ETO_OFR_ID));
+              if (purchasedLeads.length > 0) {
+                const title = purchasedLeads.map(l => l.ETO_OFR_TITLE).join(', ');
+                chrome.storage.local.get('pairedPhones', ({ pairedPhones = [] }) => {
+                  pairedPhones.forEach(phone => {
+                    push(ref(db, `leads/${phone.uid}/new`), { title, timestamp: Date.now() });
+                  });
+                });
+              }
+            }
           }
         }
 
