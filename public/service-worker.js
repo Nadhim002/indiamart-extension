@@ -254,6 +254,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 };
               });
 
+              console.table(mappedData)
+
               const filteredLeads = window.__im_utils.filterLeads(mappedData, filters);
               console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed`);
               console.table(filteredLeads);
