@@ -1,3 +1,53 @@
+const DB_NAME = 'indiamart_leads';
+const DB_VERSION = 1;
+const STORE_NAME = 'leads';
+
+function openLeadsDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'ETO_OFR_ID' });
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function upsertLead(record) {
+  const db = await openLeadsDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const getReq = store.get(record.ETO_OFR_ID);
+    getReq.onsuccess = (e) => {
+      const existing = e.target.result;
+      if (!existing) {
+        store.put(record);
+      } else if (record.reasons === 'Purchased' && existing.reasons !== 'Purchased') {
+        existing.reasons = 'Purchased';
+        store.put(existing);
+      }
+    };
+    getReq.onerror = (e) => reject(e.target.error);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function getAllLeads() {
+  const db = await openLeadsDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.getAll();
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
 let activeTabId = null;
 let activeTabUrl = null;
 let timerSeconds = 0;
@@ -7,10 +57,49 @@ let cycleCount = 0;
 let activeFilters = null;
 let activePhoneNumber = null;
 
-const ENABLE_LEAD_BUYING = true; ;
+const ENABLE_LEAD_BUYING = true;
+
+function computeRejectionReasons(lead, filters) {
+  if (!filters) return 'No filters set';
+  const reasons = [];
+  const { minPrice, minQuantity, minTimePassed, states } = filters;
+
+  if (minPrice != null || minQuantity != null) {
+    const priceOk = minPrice != null && lead.ETO_OFR_APPROX_ORDER_VALUE != null && lead.ETO_OFR_APPROX_ORDER_VALUE >= minPrice;
+    const quantityOk = minQuantity != null && lead.quantity != null && lead.quantity >= minQuantity;
+    if (!priceOk && !quantityOk) {
+      if (minPrice != null) reasons.push('Price too low');
+      if (minQuantity != null) reasons.push('Quantity too low');
+    }
+  }
+
+  if (minTimePassed != null && minTimePassed > 0) {
+    if (lead.BLDATETIME == null || lead.BLDATETIME > minTimePassed) {
+      reasons.push('Lead too old');
+    }
+  }
+
+  if (states && states.length > 0) {
+    if (!states.includes(lead.GLUSR_STATE)) {
+      reasons.push('State not selected');
+    }
+  }
+
+  return reasons.length > 0 ? reasons.join(', ') : 'Passed filters';
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
+
+  if (message.type === 'GET_ALL_LEADS') {
+    getAllLeads()
+      .then((leads) => sendResponse({ leads }))
+      .catch((err) => {
+        console.error('[DB] getAllLeads failed:', err);
+        sendResponse({ leads: [] });
+      });
+    return true;
+  }
 
   switch (message.type) {
     case 'START_TIMER':
@@ -165,8 +254,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 };
               });
 
-              // console.table(mappedData);
-
               const filteredLeads = window.__im_utils.filterLeads(mappedData, filters);
               console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed`);
               console.table(filteredLeads);
@@ -248,6 +335,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 time: new Date().toLocaleString(),
                 state: document.visibilityState
               });
+
+              return {
+                mappedData,
+                filteredIds: filteredLeads.map((l) => l.ETO_OFR_ID)
+              };
             } else {
               console.warn(
                 '[Background Timer] fetchGlidScriptJSFile not found'
@@ -259,13 +351,40 @@ chrome.alarms.onAlarm.addListener((alarm) => {
               error
             );
           }
+          return null;
         }
-      }, () => {
+      }, (results) => {
         if (chrome.runtime.lastError) {
           console.error(
             '[Background Timer] executeScript error:',
             chrome.runtime.lastError.message
           );
+        }
+
+        if (results && results[0] && !results[0].error && results[0].result) {
+          const { mappedData, filteredIds } = results[0].result;
+          if (mappedData && filteredIds) {
+            const filteredSet = new Set(filteredIds);
+            const now = new Date();
+            const firstSeenDate = now.toISOString().slice(0, 10);
+            const firstSeenTime = now.toTimeString().slice(0, 8);
+            const filtersSnapshot = activeFilters ? { ...activeFilters } : null;
+
+            mappedData.forEach((lead) => {
+              const isPurchased = filteredSet.has(lead.ETO_OFR_ID);
+              const reasons = isPurchased
+                ? (ENABLE_LEAD_BUYING ? 'Purchased' : 'Passed filters (buying disabled)')
+                : computeRejectionReasons(lead, activeFilters);
+
+              upsertLead({
+                ...lead,
+                firstSeenDate,
+                firstSeenTime,
+                reasons,
+                filtersAtFirstSeen: filtersSnapshot
+              }).catch((err) => console.error('[DB] upsertLead failed:', err));
+            });
+          }
         }
 
         if (timerRunning) {

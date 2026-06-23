@@ -118,6 +118,57 @@ export default function App() {
     sendBackgroundCommand('STOP_TIMER');
   };
 
+  const handleExportCSV = () => {
+    chrome.runtime.sendMessage({ type: 'GET_ALL_LEADS' }, ({ leads } = {}) => {
+      if (!leads || leads.length === 0) {
+        alert('No leads recorded yet.');
+        return;
+      }
+
+      const escape = (v) => {
+        if (v == null) return '';
+        const s = String(v);
+        return s.includes(',') || s.includes('"') || s.includes('\n')
+          ? `"${s.replace(/"/g, '""')}"`
+          : s;
+      };
+
+      const headers = [
+        'Lead ID', 'Title', 'Price (₹)', 'Quantity', 'Age (min)',
+        'City', 'State', 'Category ID',
+        'First Seen Date', 'First Seen Time', 'Reason',
+        'Filter Min Price', 'Filter Min Qty', 'Filter Max Age (min)', 'Filter States'
+      ];
+
+      const rows = leads.map((l) => [
+        l.ETO_OFR_ID,
+        l.ETO_OFR_TITLE,
+        l.ETO_OFR_APPROX_ORDER_VALUE,
+        l.quantity,
+        l.BLDATETIME,
+        l.GLUSR_CITY,
+        l.GLUSR_STATE,
+        l.FK_GLCAT_MCAT_ID,
+        l.firstSeenDate,
+        l.firstSeenTime,
+        l.reasons,
+        l.filtersAtFirstSeen?.minPrice,
+        l.filtersAtFirstSeen?.minQuantity,
+        l.filtersAtFirstSeen?.minTimePassed,
+        l.filtersAtFirstSeen?.states?.join(' | '),
+      ].map(escape).join(','));
+
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `indiamart-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  };
+
   const sendBackgroundCommand = (type, payload = {}) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (!tabs[0]?.id) return;
@@ -145,7 +196,10 @@ export default function App() {
 
   return (
     <main className="panel-root">
-      <h1>Timer</h1>
+      <div className="panel-header">
+        <h1>Timer</h1>
+        <button onClick={handleExportCSV} className="btn btn-export">Export CSV</button>
+      </div>
 
       <div className="timer-container">
         <div className="timer-display">{formatTime(timeLeft)}</div>
