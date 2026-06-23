@@ -12,7 +12,8 @@
     "storage"
   ],
   "background": {
-    "service_worker": "service-worker.js"
+    "service_worker": "service-worker.js",
+    "type": "module"
   },
   "action": {
     "default_title": "Indiamart Side Panel",
@@ -22,6 +23,8 @@
     "default_path": "panel.html"
   },
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "https://*.firebaseio.com/*",
+    "https://identitytoolkit.googleapis.com/*"
   ]
 }
