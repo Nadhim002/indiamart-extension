@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import './global.css';
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, signInAnonymously } from 'firebase/auth';
+import { getDatabase, ref, get, set } from 'firebase/database';
+import { FIREBASE_CONFIG } from './firebaseConfig';
 
 export default function App() {
   const [inputSeconds, setInputSeconds] = useState('3');
@@ -14,6 +18,11 @@ export default function App() {
   const [cycleCount, setCycleCount] = useState(0);
   const [activeUrl, setActiveUrl] = useState('');
   const [nextFireTime, setNextFireTime] = useState(null);
+  const [pairedPhones, setPairedPhones] = useState([]);
+  const [pairUsername, setPairUsername] = useState('');
+  const [pairCode, setPairCode] = useState('');
+  const [pairError, setPairError] = useState('');
+  const [isPairing, setIsPairing] = useState(false);
   const timerRef = useRef(null);
   const stateDropdownRef = useRef(null);
   const settingsLoadedRef = useRef(false);
@@ -41,6 +50,12 @@ export default function App() {
       if (saved.phoneNumber !== undefined) setPhoneNumber(saved.phoneNumber);
     } catch {}
     settingsLoadedRef.current = true;
+
+    chrome.storage.local.get(['pairedPhones'], (result) => {
+      if (result.pairedPhones) {
+        setPairedPhones(result.pairedPhones);
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -116,6 +131,57 @@ export default function App() {
     setTimeLeft(0);
     setCycleCount(0);
     sendBackgroundCommand('STOP_TIMER');
+  };
+
+  const handlePair = async () => {
+    const username = pairUsername.trim();
+    const code = pairCode.trim();
+    setPairError('');
+
+    if (!username) {
+      setPairError('Enter a phone name.');
+      return;
+    }
+    if (code.length !== 6) {
+      setPairError('Enter the 6-character code from your phone.');
+      return;
+    }
+
+    setIsPairing(true);
+    try {
+      const app = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG);
+      const auth = getAuth(app);
+      const db = getDatabase(app);
+
+      const credential = await signInAnonymously(auth);
+      const uid = credential.user.uid;
+
+      const pairingRef = ref(db, 'pairings/' + code.toUpperCase());
+      const snapshot = await get(pairingRef);
+
+      if (!snapshot.exists() || snapshot.val().expiresAt <= Date.now()) {
+        setPairError('Pairing failed. Code not found or expired.');
+        setIsPairing(false);
+        return;
+      }
+
+      await set(ref(db, 'leads/' + uid + '/paired'), true);
+
+      const updated = [...pairedPhones, { uid, username }];
+      setPairedPhones(updated);
+      chrome.storage.local.set({ pairedPhones: updated });
+      setPairUsername('');
+      setPairCode('');
+    } catch (e) {
+      setPairError('Pairing failed: ' + e.message);
+    }
+    setIsPairing(false);
+  };
+
+  const handleRemovePhone = (uid) => {
+    const updated = pairedPhones.filter((p) => p.uid !== uid);
+    setPairedPhones(updated);
+    chrome.storage.local.set({ pairedPhones: updated });
   };
 
   const handleExportCSV = () => {
@@ -321,6 +387,51 @@ export default function App() {
           <p>Status: <strong>{isRunning ? 'Running' : 'Stopped'}</strong></p>
           {activeUrl && <p>Target tab: <strong>{activeUrl}</strong></p>}
           {nextFireTime && <p>Next update in: <strong>{Math.max(0, Math.ceil((nextFireTime - Date.now()) / 1000))}s</strong></p>}
+        </div>
+
+        <div className="paired-section">
+          <h3>Paired Phones</h3>
+          <div className="pair-form">
+            <input
+              type="text"
+              placeholder="Phone name"
+              value={pairUsername}
+              onChange={(e) => setPairUsername(e.target.value)}
+              disabled={isPairing}
+            />
+            <input
+              type="text"
+              placeholder="6-char code"
+              maxLength={6}
+              value={pairCode}
+              onChange={(e) => setPairCode(e.target.value)}
+              disabled={isPairing}
+            />
+            <button
+              className="btn btn-pair"
+              onClick={handlePair}
+              disabled={isPairing}
+            >
+              {isPairing ? 'Pairing...' : 'Pair'}
+            </button>
+          </div>
+          {pairError && <p className="pair-error">{pairError}</p>}
+          {pairedPhones.length > 0 && (
+            <div className="phone-list">
+              {pairedPhones.map((phone) => (
+                <div className="phone-item" key={phone.uid}>
+                  <span>{phone.username}</span>
+                  <button
+                    className="btn btn-remove"
+                    onClick={() => handleRemovePhone(phone.uid)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <p className="paired-count">{pairedPhones.length} phone(s) paired</p>
+            </div>
+          )}
         </div>
       </div>
     </main>
