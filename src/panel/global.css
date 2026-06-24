@@ -331,6 +331,23 @@ body {
   background: #dc2626;
 }
 
+.btn-test {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px;
+  background: #f59e0b;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-test:hover {
+  background: #d97706;
+}
+
 .paired-count {
   font-size: 0.75rem;
   color: #6b7280;

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import './global.css';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { getDatabase, ref, get, set } from 'firebase/database';
+import { getDatabase, ref, get, set, push } from 'firebase/database';
 import { FIREBASE_CONFIG } from './firebaseConfig';
 
 export default function App() {
@@ -153,8 +153,7 @@ export default function App() {
       const auth = getAuth(app);
       const db = getDatabase(app);
 
-      const credential = await signInAnonymously(auth);
-      const uid = credential.user.uid;
+      await signInAnonymously(auth);
 
       const pairingRef = ref(db, 'pairings/' + code.toUpperCase());
       const snapshot = await get(pairingRef);
@@ -165,9 +164,10 @@ export default function App() {
         return;
       }
 
-      await set(ref(db, 'leads/' + uid + '/paired'), true);
+      const phoneUid = snapshot.val().uid;
+      await set(ref(db, 'leads/' + phoneUid + '/paired'), true);
 
-      const updated = [...pairedPhones, { uid, username }];
+      const updated = [...pairedPhones, { uid: phoneUid, username }];
       setPairedPhones(updated);
       chrome.storage.local.set({ pairedPhones: updated });
       setPairUsername('');
@@ -176,6 +176,32 @@ export default function App() {
       setPairError('Pairing failed: ' + e.message);
     }
     setIsPairing(false);
+  };
+
+  const handleTestNotification = async () => {
+    console.log('[Test] pairedPhones:', pairedPhones);
+    if (pairedPhones.length === 0) {
+      console.warn('[Test] No paired phones — aborting');
+      return;
+    }
+    try {
+      const app = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG);
+      console.log('[Test] Firebase app:', app.name);
+      const auth = getAuth(app);
+      const db = getDatabase(app);
+      const cred = await signInAnonymously(auth);
+      console.log('[Test] Signed in as:', cred.user.uid);
+      await Promise.all(
+        pairedPhones.map(async (phone) => {
+          console.log('[Test] Pushing to leads/' + phone.uid + '/new');
+          const result = await push(ref(db, `leads/${phone.uid}/new`), { title: 'Test Lead — Mock Purchase', timestamp: Date.now() });
+          console.log('[Test] Push key:', result.key);
+        })
+      );
+      console.log('[Test] Done — all pushes complete');
+    } catch (e) {
+      console.error('[Test] Error:', e);
+    }
   };
 
   const handleRemovePhone = (uid) => {
@@ -430,6 +456,9 @@ export default function App() {
                 </div>
               ))}
               <p className="paired-count">{pairedPhones.length} phone(s) paired</p>
+              <button className="btn btn-test" onClick={handleTestNotification}>
+                Send Test Notification
+              </button>
             </div>
           )}
         </div>
