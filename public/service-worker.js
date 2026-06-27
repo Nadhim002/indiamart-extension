@@ -1,12 +1,71 @@
-import { initializeApp, getApps } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getDatabase, ref, push } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { FIREBASE_CONFIG } from './firebase-config.js';
 
-const app = getApps().length === 0 ? initializeApp(FIREBASE_CONFIG) : getApps()[0];
-const auth = getAuth(app);
-const db = getDatabase(app);
-signInAnonymously(auth).catch(e => console.error('[SW] Firebase auth failed', e));
+async function sendLeadNotifications(purchasedLeads) {
+  const { registeredFcmTokens = [], googleUID, googleIdToken } = await new Promise((resolve) =>
+    chrome.storage.local.get(['registeredFcmTokens', 'googleUID', 'googleIdToken'], resolve)
+  );
+
+  if (!googleUID || !googleIdToken) {
+    console.warn('[FCM] Not signed in — skipping notifications');
+    return;
+  }
+
+  if (registeredFcmTokens.length === 0) {
+    console.warn('[FCM] No registered phones — skipping notifications');
+  }
+
+  const DB_URL = FIREBASE_CONFIG.databaseURL;
+
+  for (const lead of purchasedLeads) {
+    const payload = {
+      title: lead.ETO_OFR_TITLE ?? 'New Lead',
+      buyerName: lead.buyerName ?? null,
+      buyerMobile: lead.buyerMobile ?? null,
+      quantity: lead.quantity != null ? String(lead.quantity) : null,
+      city: lead.GLUSR_CITY ?? null,
+      state: lead.GLUSR_STATE ?? null,
+      timestamp: Date.now(),
+    };
+
+    // Write to Firebase so phone's real-time listener also picks it up
+    try {
+      await fetch(`${DB_URL}/leads/${googleUID}/new.json?auth=${googleIdToken}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      console.error('[Firebase] Failed to write lead:', e);
+    }
+
+    // Push via Expo to each registered phone (covers killed-app state)
+    const body = [lead.buyerName, lead.GLUSR_CITY, lead.GLUSR_STATE].filter(Boolean).join(' — ');
+    await Promise.all(
+      registeredFcmTokens.map(async (token) => {
+        try {
+          const res = await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: token,
+              title: payload.title,
+              body: body || 'New lead purchased!',
+              channelId: 'lead-alerts',
+              priority: 'high',
+              sound: 'default',
+              data: payload,
+            }),
+          });
+          const data = await res.json();
+          console.log('[FCM] Sent to', token.slice(0, 30) + '...', data);
+        } catch (e) {
+          console.error('[FCM] Failed to send to', token.slice(0, 20), e);
+        }
+      })
+    );
+  }
+}
+
 
 const DB_NAME = 'indiamart_leads';
 const DB_VERSION = 1;
@@ -340,6 +399,19 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 });
 
                 console.table(purchaseData.map(({ lead, data }) => ({ ofrid: lead.ETO_OFR_ID, title: lead.ETO_OFR_TITLE, response: JSON.stringify(data) })));
+
+                // Extract buyer contact info from purchase response to pass back to service worker
+                const purchaseDetails = purchaseData
+                  .filter(({ data }) => data != null)
+                  .map(({ lead, data }) => ({
+                    ETO_OFR_ID: lead.ETO_OFR_ID,
+                    ETO_OFR_TITLE: lead.ETO_OFR_TITLE,
+                    quantity: lead.quantity,
+                    GLUSR_CITY: lead.GLUSR_CITY,
+                    GLUSR_STATE: lead.GLUSR_STATE,
+                    buyerMobile: data?.MOBNO ?? data?.mobile ?? data?.mob ?? null,
+                    buyerName: data?.CNAME ?? data?.name ?? data?.buyer_name ?? null,
+                  }));
               }
 
               console.table({
@@ -350,7 +422,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
               return {
                 mappedData,
-                filteredIds: filteredLeads.map((l) => l.ETO_OFR_ID)
+                filteredIds: filteredLeads.map((l) => l.ETO_OFR_ID),
+                purchaseDetails: typeof purchaseDetails !== 'undefined' ? purchaseDetails : [],
               };
             } else {
               console.warn(
@@ -374,7 +447,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         }
 
         if (results && results[0] && !results[0].error && results[0].result) {
-          const { mappedData, filteredIds } = results[0].result;
+          const { mappedData, filteredIds, purchaseDetails = [] } = results[0].result;
           if (mappedData && filteredIds) {
             const filteredSet = new Set(filteredIds);
             const now = new Date();
@@ -397,16 +470,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
               }).catch((err) => console.error('[DB] upsertLead failed:', err));
             });
 
-            if (ENABLE_LEAD_BUYING) {
-              const purchasedLeads = mappedData.filter(l => filteredSet.has(l.ETO_OFR_ID));
-              if (purchasedLeads.length > 0) {
-                const title = purchasedLeads.map(l => l.ETO_OFR_TITLE).join(', ');
-                chrome.storage.local.get('pairedPhones', ({ pairedPhones = [] }) => {
-                  pairedPhones.forEach(phone => {
-                    push(ref(db, `leads/${phone.uid}/new`), { title, timestamp: Date.now() });
-                  });
-                });
-              }
+            if (ENABLE_LEAD_BUYING && purchaseDetails.length > 0) {
+              sendLeadNotifications(purchaseDetails);
             }
           }
         }
