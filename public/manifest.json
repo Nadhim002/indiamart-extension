@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Indiamart Side Panel",
+  "name": "Indiamart Lead Notifier",
   "version": "1.0.0",
-  "description": "Chrome extension with a React side panel showing Hello World.",
+  "description": "Monitor Indiamart buy-leads and receive alerts on your phone.",
   "permissions": [
     "sidePanel",
     "scripting",
@@ -17,7 +17,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Indiamart Side Panel",
+    "default_title": "Indiamart Lead Notifier",
     "default_popup": "panel.html"
   },
   "side_panel": {
