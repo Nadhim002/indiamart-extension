@@ -113,11 +113,11 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
 
     devicesUnsubRef.current = onValue(devicesRef, (snap) => {
       const devices = (snap.val() || {}) as Record<string, DeviceRecord>;
-      const tokens = Object.values(devices)
-        .map((d) => d.fcmToken)
-        .filter((token): token is string => Boolean(token));
-      chrome.storage.local.set({ registeredFcmTokens: tokens });
-      setRegisteredDeviceCount(tokens.length);
+      const registeredDevices = Object.values(devices)
+        .filter((d): d is DeviceRecord & { fcmToken: string } => Boolean(d.fcmToken))
+        .map((d) => ({ token: d.fcmToken, notificationStyle: d.notificationStyle ?? 'headsup' }));
+      chrome.storage.local.set({ registeredDevices });
+      setRegisteredDeviceCount(registeredDevices.length);
     });
 
     return () => {
@@ -168,14 +168,15 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
   };
 
   const handleTestNotification = async () => {
-    chrome.storage.local.get(['registeredFcmTokens'], async (result) => {
-      const registeredFcmTokens = (result.registeredFcmTokens as string[] | undefined) ?? [];
-      if (registeredFcmTokens.length === 0) {
+    chrome.storage.local.get(['registeredDevices'], async (result) => {
+      const registeredDevices = (result.registeredDevices as Array<{ token: string; notificationStyle: string }> | undefined) ?? [];
+      if (registeredDevices.length === 0) {
         console.warn('[Test] No registered phones');
         return;
       }
       await Promise.all(
-        registeredFcmTokens.map(async (token) => {
+        registeredDevices.map(async ({ token, notificationStyle }) => {
+          const channelId = notificationStyle === 'phonecall' ? 'lead-alerts-phonecall' : 'lead-alerts-v2';
           const res = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -183,7 +184,7 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
               to: token,
               title: 'Test Lead — Mock Purchase',
               body: 'Buyer: Test User — Mumbai, Maharashtra',
-              channelId: 'lead-alerts',
+              channelId,
               priority: 'high',
               sound: 'default',
               data: {
@@ -197,7 +198,7 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
             }),
           });
           const data = await res.json();
-          console.log('[Test] Expo response:', data);
+          console.log('[Test] Expo response:', data, 'channel:', channelId);
         })
       );
     });

@@ -1,8 +1,8 @@
 import { FIREBASE_CONFIG } from './firebase-config.js';
 
 async function sendLeadNotifications(purchasedLeads) {
-  const { registeredFcmTokens = [], googleUID, googleIdToken } = await new Promise((resolve) =>
-    chrome.storage.local.get(['registeredFcmTokens', 'googleUID', 'googleIdToken'], resolve)
+  const { registeredDevices = [], googleUID, googleIdToken } = await new Promise((resolve) =>
+    chrome.storage.local.get(['registeredDevices', 'googleUID', 'googleIdToken'], resolve)
   );
 
   if (!googleUID || !googleIdToken) {
@@ -10,7 +10,7 @@ async function sendLeadNotifications(purchasedLeads) {
     return;
   }
 
-  if (registeredFcmTokens.length === 0) {
+  if (registeredDevices.length === 0) {
     console.warn('[FCM] No registered phones — skipping notifications');
   }
 
@@ -41,7 +41,8 @@ async function sendLeadNotifications(purchasedLeads) {
     // Push via Expo to each registered phone (covers killed-app state)
     const body = [lead.buyerName, lead.GLUSR_CITY, lead.GLUSR_STATE].filter(Boolean).join(' — ');
     await Promise.all(
-      registeredFcmTokens.map(async (token) => {
+      registeredDevices.map(async ({ token, notificationStyle }) => {
+        const channelId = notificationStyle === 'phonecall' ? 'lead-alerts-phonecall' : 'lead-alerts-v2';
         try {
           const res = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
@@ -50,14 +51,14 @@ async function sendLeadNotifications(purchasedLeads) {
               to: token,
               title: payload.title,
               body: body || 'New lead purchased!',
-              channelId: 'lead-alerts',
+              channelId,
               priority: 'high',
               sound: 'default',
               data: payload,
             }),
           });
           const data = await res.json();
-          console.log('[FCM] Sent to', token.slice(0, 30) + '...', data);
+          console.log('[FCM] Sent to', token.slice(0, 30) + '...', 'channel:', channelId, data);
         } catch (e) {
           console.error('[FCM] Failed to send to', token.slice(0, 20), e);
         }

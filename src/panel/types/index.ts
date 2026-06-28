@@ -23,6 +23,7 @@ export interface TimerState {
 
 export interface DeviceRecord {
   fcmToken?: string;
+  notificationStyle?: string;
 }
 
 export interface LeadFiltersAtFirstSeen {
