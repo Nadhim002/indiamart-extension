@@ -18,6 +18,7 @@ import type {
   TimerState,
 } from '@/types';
 import PageShell from '@/components/PageShell';
+import { CHANNEL_BANNER } from '@/lib/channels';
 
 const STATE_OPTIONS = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
@@ -174,31 +175,44 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
         console.warn('[Test] No registered phones');
         return;
       }
+      const mockLead = {
+        title: 'Test Lead — Mock Purchase',
+        buyerName: 'Test User',
+        buyerMobile: '9000000000',
+        quantity: '100',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+      };
+      const testBody = 'Buyer: Test User — Mumbai, Maharashtra';
       await Promise.all(
         registeredDevices.map(async ({ token, notificationStyle }) => {
-          const channelId = notificationStyle === 'phonecall' ? 'lead-alerts-phonecall' : 'lead-alerts-v2';
+          const isPhonecall = notificationStyle === 'phonecall';
+          // Mirror the production send (service-worker.js): phonecall = DATA-ONLY
+          // push that the native service turns into a full-screen intent; headsup
+          // = normal notification push on the banner channel.
+          const expoMessage = isPhonecall
+            ? {
+                to: token,
+                data: { type: 'phonecall', title: mockLead.title, body: testBody, lead: JSON.stringify(mockLead) },
+                priority: 'high',
+                _contentAvailable: true,
+              }
+            : {
+                to: token,
+                title: mockLead.title,
+                body: testBody,
+                channelId: CHANNEL_BANNER,
+                priority: 'high',
+                sound: 'default',
+                data: mockLead,
+              };
           const res = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: token,
-              title: 'Test Lead — Mock Purchase',
-              body: 'Buyer: Test User — Mumbai, Maharashtra',
-              channelId,
-              priority: 'high',
-              sound: 'default',
-              data: {
-                title: 'Test Lead — Mock Purchase',
-                buyerName: 'Test User',
-                buyerMobile: '9000000000',
-                quantity: '100',
-                city: 'Mumbai',
-                state: 'Maharashtra',
-              },
-            }),
+            body: JSON.stringify(expoMessage),
           });
           const data = await res.json();
-          console.log('[Test] Expo response:', data, 'channel:', channelId);
+          console.log('[Test] Expo response:', data, isPhonecall ? 'phonecall(data-only)' : `banner(${CHANNEL_BANNER})`);
         })
       );
     });

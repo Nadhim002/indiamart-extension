@@ -1,4 +1,5 @@
 import { FIREBASE_CONFIG } from './firebase-config.js';
+import { CHANNEL_BANNER } from './channels.js';
 
 async function sendLeadNotifications(purchasedLeads) {
   const { registeredDevices = [], googleUID, googleIdToken } = await new Promise((resolve) =>
@@ -39,26 +40,37 @@ async function sendLeadNotifications(purchasedLeads) {
     }
 
     // Push via Expo to each registered phone (covers killed-app state)
-    const body = [lead.buyerName, lead.GLUSR_CITY, lead.GLUSR_STATE].filter(Boolean).join(' — ');
+    const body = [lead.buyerName, lead.GLUSR_CITY, lead.GLUSR_STATE].filter(Boolean).join(' — ') || 'New lead purchased!';
     await Promise.all(
       registeredDevices.map(async ({ token, notificationStyle }) => {
-        const channelId = notificationStyle === 'phonecall' ? 'lead-alerts-phonecall-v2' : 'lead-alerts-v3';
+        const isPhonecall = notificationStyle === 'phonecall';
+        // Phonecall: DATA-ONLY push (no title/body) so it is NOT auto-displayed by
+        // the system. The native LeadNotificationService picks it up and fires the
+        // full-screen intent. Headsup: normal notification push on the banner channel.
+        const expoMessage = isPhonecall
+          ? {
+              to: token,
+              data: { type: 'phonecall', title: payload.title, body, lead: JSON.stringify(payload) },
+              priority: 'high',
+              _contentAvailable: true,
+            }
+          : {
+              to: token,
+              title: payload.title,
+              body,
+              channelId: CHANNEL_BANNER,
+              priority: 'high',
+              sound: 'default',
+              data: payload,
+            };
         try {
           const res = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: token,
-              title: payload.title,
-              body: body || 'New lead purchased!',
-              channelId,
-              priority: 'high',
-              sound: 'default',
-              data: payload,
-            }),
+            body: JSON.stringify(expoMessage),
           });
           const data = await res.json();
-          console.log('[FCM] Sent to', token.slice(0, 30) + '...', 'channel:', channelId, data);
+          console.log('[FCM] Sent to', token.slice(0, 30) + '...', isPhonecall ? 'phonecall(data-only)' : `banner(${CHANNEL_BANNER})`, data);
         } catch (e) {
           console.error('[FCM] Failed to send to', token.slice(0, 20), e);
         }
