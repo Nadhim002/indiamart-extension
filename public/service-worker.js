@@ -42,7 +42,7 @@ async function sendLeadNotifications(purchasedLeads) {
     const body = [lead.buyerName, lead.GLUSR_CITY, lead.GLUSR_STATE].filter(Boolean).join(' — ');
     await Promise.all(
       registeredDevices.map(async ({ token, notificationStyle }) => {
-        const channelId = notificationStyle === 'phonecall' ? 'lead-alerts-phonecall' : 'lead-alerts-v2';
+        const channelId = notificationStyle === 'phonecall' ? 'lead-alerts-phonecall-v2' : 'lead-alerts-v3';
         try {
           const res = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
