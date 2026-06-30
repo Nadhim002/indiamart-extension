@@ -13,6 +13,7 @@ export default defineConfig({
     },
   },
   build: {
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       input: {
         panel: 'panel.html'
