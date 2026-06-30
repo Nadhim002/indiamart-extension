@@ -7,6 +7,8 @@ interface TimerControlsProps {
   setInputSeconds: (value: string) => void;
   phoneNumber: string;
   setPhoneNumber: (value: string) => void;
+  testMode: boolean;
+  setTestMode: (value: boolean) => void;
   isRunning: boolean;
   onStart: () => void;
   onStop: () => void;
@@ -18,6 +20,8 @@ export default function TimerControls({
   setInputSeconds,
   phoneNumber,
   setPhoneNumber,
+  testMode,
+  setTestMode,
   isRunning,
   onStart,
   onStop,
@@ -48,6 +52,22 @@ export default function TimerControls({
           placeholder="e.g. 9842142030"
         />
       </div>
+
+      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-input px-3 py-2">
+        <span>
+          <span className="block text-sm font-medium">Test mode</span>
+          <span className="block text-xs text-muted-foreground">
+            Log matching leads without buying
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={testMode}
+          onChange={(e) => setTestMode(e.target.checked)}
+          disabled={isRunning}
+          className="h-4 w-4 accent-primary"
+        />
+      </label>
 
       <div className="grid grid-cols-2 gap-2 pt-1">
         <Button onClick={onStart} disabled={isRunning}>

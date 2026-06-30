@@ -3,6 +3,8 @@ export interface LeadFilters {
   minQuantity: number | null;
   minTimePassed: number | null;
   states: string[] | null;
+  includeKeywords: string[] | null;
+  excludeKeywords: string[] | null;
 }
 
 export interface ExtensionSettings {
@@ -11,7 +13,10 @@ export interface ExtensionSettings {
   minQuantity?: string;
   minTimePassed?: string;
   selectedStates?: string[];
+  includeKeywords?: string[];
+  excludeKeywords?: string[];
   phoneNumber?: string;
+  testMode?: boolean;
 }
 
 export interface TimerState {
@@ -31,6 +36,8 @@ export interface LeadFiltersAtFirstSeen {
   minQuantity?: number | null;
   minTimePassed?: number | null;
   states?: string[];
+  includeKeywords?: string[];
+  excludeKeywords?: string[];
 }
 
 export interface LeadRecord {
@@ -54,4 +61,5 @@ export interface StartTimerPayload {
   seconds: number;
   filters: LeadFilters;
   phoneNumber: string;
+  testMode: boolean;
 }

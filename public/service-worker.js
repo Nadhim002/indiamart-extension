@@ -138,13 +138,14 @@ let nextFireTime = null;
 let cycleCount = 0;
 let activeFilters = null;
 let activePhoneNumber = null;
+let activeTestMode = false;
 
 const ENABLE_LEAD_BUYING = true;
 
 function computeRejectionReasons(lead, filters) {
   if (!filters) return 'No filters set';
   const reasons = [];
-  const { minPrice, minQuantity, minTimePassed, states } = filters;
+  const { minPrice, minQuantity, minTimePassed, states, includeKeywords, excludeKeywords } = filters;
 
   if (minPrice != null || minQuantity != null) {
     const priceOk = minPrice != null && lead.ETO_OFR_APPROX_ORDER_VALUE != null && lead.ETO_OFR_APPROX_ORDER_VALUE >= minPrice;
@@ -164,6 +165,18 @@ function computeRejectionReasons(lead, filters) {
   if (states && states.length > 0) {
     if (!states.includes(lead.GLUSR_STATE)) {
       reasons.push('State not selected');
+    }
+  }
+
+  const title = (lead.ETO_OFR_TITLE || '').toLowerCase();
+  if (excludeKeywords && excludeKeywords.length > 0) {
+    if (excludeKeywords.some((kw) => title.includes(String(kw).toLowerCase()))) {
+      reasons.push('Title excluded by keyword');
+    }
+  }
+  if (includeKeywords && includeKeywords.length > 0) {
+    if (!includeKeywords.some((kw) => title.includes(String(kw).toLowerCase()))) {
+      reasons.push('Title keyword not matched');
     }
   }
 
@@ -192,6 +205,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       cycleCount = 0;
       activeFilters = message.filters || null;
       activePhoneNumber = message.phoneNumber || null;
+      activeTestMode = message.testMode === true;
       nextFireTime = Date.now() + timerSeconds * 1000;
       scheduleAlarm();
       sendResponse({ ok: true, nextFireTime, cycleCount });
@@ -243,7 +257,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       chrome.scripting.executeScript({
         target: { tabId: activeTabId },
         world: 'MAIN',
-        args: [activeFilters, activePhoneNumber, ENABLE_LEAD_BUYING],
+        args: [activeFilters, activePhoneNumber, ENABLE_LEAD_BUYING && !activeTestMode],
         func: async (filters, phoneNumber, enableLeadBuying) => {
           try {
             if (typeof fetchGlidScriptJSFile === 'function') {
@@ -339,7 +353,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
               console.table(mappedData)
 
               const filteredLeads = window.__im_utils.filterLeads(mappedData, filters);
-              console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed`);
+              console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed:`, JSON.stringify(filteredLeads, null, 2));
               console.table(filteredLeads);
 
               console.log(`[Purchase] Lead buying is ${enableLeadBuying ? 'enabled' : 'disabled'}`);
@@ -470,8 +484,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
             mappedData.forEach((lead) => {
               const isPurchased = filteredSet.has(lead.ETO_OFR_ID);
+              const matchedReason = activeTestMode
+                ? 'Matched (test mode)'
+                : (ENABLE_LEAD_BUYING ? 'Purchased' : 'Passed filters (buying disabled)');
               const reasons = isPurchased
-                ? (ENABLE_LEAD_BUYING ? 'Purchased' : 'Passed filters (buying disabled)')
+                ? matchedReason
                 : computeRejectionReasons(lead, activeFilters);
 
               upsertLead({

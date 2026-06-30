@@ -46,7 +46,7 @@
 
   function filterLeads(leads, filters) {
     if (!filters) return leads;
-    const { minPrice, minQuantity, minTimePassed, states } = filters;
+    const { minPrice, minQuantity, minTimePassed, states, includeKeywords, excludeKeywords } = filters;
 
     return leads.filter((lead) => {
       // Price OR Quantity — skip this check if neither threshold is configured
@@ -64,6 +64,15 @@
       // State — lead's state must be in the selected list
       if (states && states.length > 0) {
         if (!states.includes(lead.GLUSR_STATE)) return false;
+      }
+
+      // Title keywords — exclude is a hard veto applied before include
+      const title = (lead.ETO_OFR_TITLE || '').toLowerCase();
+      if (excludeKeywords && excludeKeywords.length > 0) {
+        if (excludeKeywords.some((kw) => title.includes(String(kw).toLowerCase()))) return false;
+      }
+      if (includeKeywords && includeKeywords.length > 0) {
+        if (!includeKeywords.some((kw) => title.includes(String(kw).toLowerCase()))) return false;
       }
 
       return true;

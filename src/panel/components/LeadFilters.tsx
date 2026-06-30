@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import TagInput from '@/components/ui/tag-input';
 import { cn } from '@/lib/utils';
 
 interface LeadFiltersProps {
@@ -22,6 +23,10 @@ interface LeadFiltersProps {
   selectedStates: string[];
   toggleStateSelection: (state: string) => void;
   stateOptions: readonly string[];
+  includeKeywords: string[];
+  setIncludeKeywords: (value: string[]) => void;
+  excludeKeywords: string[];
+  setExcludeKeywords: (value: string[]) => void;
   isRunning: boolean;
 }
 
@@ -35,6 +40,10 @@ export default function LeadFilters({
   selectedStates,
   toggleStateSelection,
   stateOptions,
+  includeKeywords,
+  setIncludeKeywords,
+  excludeKeywords,
+  setExcludeKeywords,
   isRunning,
 }: LeadFiltersProps) {
   const [statesOpen, setStatesOpen] = useState(false);
@@ -44,6 +53,8 @@ export default function LeadFilters({
     minQuantity.trim(),
     minTimePassed.trim(),
     selectedStates.length > 0,
+    includeKeywords.length > 0,
+    excludeKeywords.length > 0,
   ].filter(Boolean).length;
 
   const triggerLabel =
@@ -144,6 +155,26 @@ export default function LeadFilters({
               </Popover>
               <p className="text-xs text-muted-foreground">No states = no filter</p>
             </div>
+
+            <TagInput
+              id="includeKeywords"
+              label="Title must include (any)"
+              value={includeKeywords}
+              onChange={setIncludeKeywords}
+              placeholder="e.g. bag, backpack"
+              disabled={isRunning}
+              hint="No keywords = no filter"
+            />
+
+            <TagInput
+              id="excludeKeywords"
+              label="Title must not include"
+              value={excludeKeywords}
+              onChange={setExcludeKeywords}
+              placeholder="e.g. plastic"
+              disabled={isRunning}
+              hint="No keywords = no filter"
+            />
           </div>
         </AccordionContent>
       </AccordionItem>

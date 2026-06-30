@@ -38,7 +38,10 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
   const [minQuantity, setMinQuantity] = useState('');
   const [minTimePassed, setMinTimePassed] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [testMode, setTestMode] = useState(false);
   const [selectedStates, setSelectedStates] = useState<string[]>([]);
+  const [includeKeywords, setIncludeKeywords] = useState<string[]>([]);
+  const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);
   const [timeLeft, setTimeLeft] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [cycleCount, setCycleCount] = useState(0);
@@ -84,7 +87,10 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
       if (saved.minQuantity !== undefined) setMinQuantity(saved.minQuantity);
       if (saved.minTimePassed !== undefined) setMinTimePassed(saved.minTimePassed);
       if (saved.selectedStates !== undefined) setSelectedStates(saved.selectedStates);
+      if (saved.includeKeywords !== undefined) setIncludeKeywords(saved.includeKeywords);
+      if (saved.excludeKeywords !== undefined) setExcludeKeywords(saved.excludeKeywords);
       if (saved.phoneNumber !== undefined) setPhoneNumber(saved.phoneNumber);
+      if (saved.testMode !== undefined) setTestMode(saved.testMode);
     } catch {
       // ignore malformed settings
     }
@@ -102,10 +108,13 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
       minQuantity,
       minTimePassed,
       selectedStates,
+      includeKeywords,
+      excludeKeywords,
       phoneNumber,
+      testMode,
     };
     localStorage.setItem('im-extension-settings', JSON.stringify(settings));
-  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, phoneNumber]);
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, includeKeywords, excludeKeywords, phoneNumber, testMode]);
 
   useEffect(() => {
     const app = getFirebaseApp();
@@ -147,11 +156,13 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
         minQuantity: Number.isFinite(minQuantityValue) ? minQuantityValue : null,
         minTimePassed: Number.isFinite(minTimePassedValue) ? minTimePassedValue : null,
         states: selectedStates.length ? selectedStates : null,
+        includeKeywords: includeKeywords.length ? includeKeywords : null,
+        excludeKeywords: excludeKeywords.length ? excludeKeywords : null,
       };
       setTimeLeft(seconds);
       setIsRunning(true);
       setCycleCount(0);
-      sendBackgroundCommand('START_TIMER', { seconds, filters, phoneNumber });
+      sendBackgroundCommand('START_TIMER', { seconds, filters, phoneNumber, testMode });
     }
   };
 
@@ -236,6 +247,7 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
         'Lead ID', 'Title', 'Price (₹)', 'Quantity', 'Age (min)', 'City', 'State',
         'Category ID', 'First Seen Date', 'First Seen Time', 'Reason',
         'Filter Min Price', 'Filter Min Qty', 'Filter Max Age (min)', 'Filter States',
+        'Filter Include Kw', 'Filter Exclude Kw',
       ];
       const rows = leads.map((l) =>
         [
@@ -254,6 +266,8 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
           l.filtersAtFirstSeen?.minQuantity,
           l.filtersAtFirstSeen?.minTimePassed,
           l.filtersAtFirstSeen?.states?.join(' | '),
+          l.filtersAtFirstSeen?.includeKeywords?.join(' | '),
+          l.filtersAtFirstSeen?.excludeKeywords?.join(' | '),
         ]
           .map(escape)
           .join(',')
@@ -296,6 +310,8 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
         setInputSeconds={setInputSeconds}
         phoneNumber={phoneNumber}
         setPhoneNumber={setPhoneNumber}
+        testMode={testMode}
+        setTestMode={setTestMode}
         isRunning={isRunning}
         onStart={handleStart}
         onStop={handleStop}
@@ -312,6 +328,10 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
         selectedStates={selectedStates}
         toggleStateSelection={toggleStateSelection}
         stateOptions={STATE_OPTIONS}
+        includeKeywords={includeKeywords}
+        setIncludeKeywords={setIncludeKeywords}
+        excludeKeywords={excludeKeywords}
+        setExcludeKeywords={setExcludeKeywords}
         isRunning={isRunning}
       />
 
