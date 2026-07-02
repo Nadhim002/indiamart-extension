@@ -1,0 +1,14 @@
+import type { FirebaseOptions } from 'firebase/app';
+
+// Firebase web config — single source of truth for this repo. Consumed by the
+// bundled panel (via firebase/app) and by the bundled service worker (which
+// uses only FIREBASE_CONFIG.databaseURL for raw RTDB REST calls).
+export const FIREBASE_CONFIG: FirebaseOptions = {
+  apiKey: 'AIzaSyB1ynT9OknXikIviuXNL-6xU_u3NbFd1R0',
+  authDomain: 'indiamart-extension-notifier.firebaseapp.com',
+  databaseURL: 'https://indiamart-extension-notifier-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'indiamart-extension-notifier',
+  storageBucket: 'indiamart-extension-notifier.firebasestorage.app',
+  messagingSenderId: '797004741619',
+  appId: '1:797004741619:web:9733864b41beafb10e3086',
+};

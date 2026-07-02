@@ -18,7 +18,8 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/panel/*"]
+      "@/*": ["src/panel/*"],
+      "@shared/*": ["src/shared/*"]
     },
     "types": ["chrome"]
   },
