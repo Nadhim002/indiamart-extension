@@ -1,5 +1,7 @@
-import { FIREBASE_CONFIG } from './firebase-config.js';
-import { CHANNEL_BANNER } from './channels.js';
+import { FIREBASE_CONFIG } from '@shared/firebaseConfig';
+import { CHANNEL_BANNER } from '@shared/channels';
+import { buildExpoMessage } from '@shared/pushPayload';
+import { rejectionReason } from '@shared/leadPolicy';
 
 async function sendLeadNotifications(purchasedLeads) {
   const { registeredDevices = [], googleUID, googleIdToken } = await new Promise((resolve) =>
@@ -39,30 +41,19 @@ async function sendLeadNotifications(purchasedLeads) {
       console.error('[Firebase] Failed to write lead:', e);
     }
 
-    // Push via Expo to each registered phone (covers killed-app state)
+    // Push via Expo to each registered phone (covers killed-app state).
+    // The message shape lives in one place — @shared/pushPayload.
     const body = [lead.buyerName, lead.GLUSR_CITY, lead.GLUSR_STATE].filter(Boolean).join(' — ') || 'New lead purchased!';
     await Promise.all(
       registeredDevices.map(async ({ token, notificationStyle }) => {
         const isPhonecall = notificationStyle === 'phonecall';
-        // Phonecall: DATA-ONLY push (no title/body) so it is NOT auto-displayed by
-        // the system. The native LeadNotificationService picks it up and fires the
-        // full-screen intent. Headsup: normal notification push on the banner channel.
-        const expoMessage = isPhonecall
-          ? {
-              to: token,
-              data: { type: 'phonecall', title: payload.title, body, lead: JSON.stringify(payload) },
-              priority: 'high',
-              _contentAvailable: true,
-            }
-          : {
-              to: token,
-              title: payload.title,
-              body,
-              channelId: CHANNEL_BANNER,
-              priority: 'high',
-              sound: 'default',
-              data: payload,
-            };
+        const expoMessage = buildExpoMessage({
+          token,
+          notificationStyle,
+          title: payload.title,
+          body,
+          payload,
+        });
         try {
           const res = await fetch('https://exp.host/--/api/v2/push/send', {
             method: 'POST',
@@ -141,47 +132,6 @@ let activePhoneNumber = null;
 let activeTestMode = false;
 
 const ENABLE_LEAD_BUYING = true;
-
-function computeRejectionReasons(lead, filters) {
-  if (!filters) return 'No filters set';
-  const reasons = [];
-  const { minPrice, minQuantity, minTimePassed, states, includeKeywords, excludeKeywords } = filters;
-
-  if (minPrice != null || minQuantity != null) {
-    const priceOk = minPrice != null && lead.ETO_OFR_APPROX_ORDER_VALUE != null && lead.ETO_OFR_APPROX_ORDER_VALUE >= minPrice;
-    const quantityOk = minQuantity != null && lead.quantity != null && lead.quantity >= minQuantity;
-    if (!priceOk && !quantityOk) {
-      if (minPrice != null) reasons.push('Price too low');
-      if (minQuantity != null) reasons.push('Quantity too low');
-    }
-  }
-
-  if (minTimePassed != null && minTimePassed > 0) {
-    if (lead.BLDATETIME == null || lead.BLDATETIME > minTimePassed) {
-      reasons.push('Lead too old');
-    }
-  }
-
-  if (states && states.length > 0) {
-    if (!states.includes(lead.GLUSR_STATE)) {
-      reasons.push('State not selected');
-    }
-  }
-
-  const title = (lead.ETO_OFR_TITLE || '').toLowerCase();
-  if (excludeKeywords && excludeKeywords.length > 0) {
-    if (excludeKeywords.some((kw) => title.includes(String(kw).toLowerCase()))) {
-      reasons.push('Title excluded by keyword');
-    }
-  }
-  if (includeKeywords && includeKeywords.length > 0) {
-    if (!includeKeywords.some((kw) => title.includes(String(kw).toLowerCase()))) {
-      reasons.push('Title keyword not matched');
-    }
-  }
-
-  return reasons.length > 0 ? reasons.join(', ') : 'Passed filters';
-}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
@@ -489,7 +439,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 : (ENABLE_LEAD_BUYING ? 'Purchased' : 'Passed filters (buying disabled)');
               const reasons = isPurchased
                 ? matchedReason
-                : computeRejectionReasons(lead, activeFilters);
+                : rejectionReason(lead, activeFilters);
 
               upsertLead({
                 ...lead,

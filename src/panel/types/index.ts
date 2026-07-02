@@ -1,11 +1,7 @@
-export interface LeadFilters {
-  minPrice: number | null;
-  minQuantity: number | null;
-  minTimePassed: number | null;
-  states: string[] | null;
-  includeKeywords: string[] | null;
-  excludeKeywords: string[] | null;
-}
+// LeadFilters is defined once in the shared seam and re-exported here so the
+// panel's existing `@/types` imports keep working.
+import type { LeadFilters } from '@shared/types';
+export type { LeadFilters };
 
 export interface ExtensionSettings {
   inputSeconds?: string;
