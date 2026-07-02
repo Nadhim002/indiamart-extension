@@ -1,24 +1,17 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
 import type { User } from 'firebase/auth';
-import type { Unsubscribe } from 'firebase/database';
-import { getDatabase, ref, onValue } from 'firebase/database';
-import { getFirebaseApp } from '@/lib/firebase';
 import PageHeader from '@/components/PageHeader';
 import TimerHero from '@/components/TimerHero';
 import TimerControls from '@/components/TimerControls';
 import LeadFilters from '@/components/LeadFilters';
 import StatusFooter from '@/components/StatusFooter';
 import DevicesSection from '@/components/DevicesSection';
-import type {
-  BackgroundCommandType,
-  DeviceRecord,
-  ExtensionSettings,
-  LeadRecord,
-  StartTimerPayload,
-  TimerState,
-} from '@/types';
 import PageShell from '@/components/PageShell';
-import { CHANNEL_BANNER } from '@/lib/channels';
+import type { LeadRecord } from '@/types';
+import { useSettings } from '@/hooks/useSettings';
+import { useTimer } from '@/hooks/useTimer';
+import { useDevices } from '@/hooks/useDevices';
+import { leadsToCsv } from '@/lib/leadsCsv';
+import { sendTestNotification } from '@/lib/testNotification';
 
 const STATE_OPTIONS = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
@@ -32,247 +25,31 @@ interface DashboardPageProps {
   onSignOut: () => void;
 }
 
+function formatTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 export default function DashboardPage({ googleUser, onSignOut }: DashboardPageProps) {
-  const [inputSeconds, setInputSeconds] = useState('3');
-  const [minPrice, setMinPrice] = useState('');
-  const [minQuantity, setMinQuantity] = useState('');
-  const [minTimePassed, setMinTimePassed] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [testMode, setTestMode] = useState(false);
-  const [selectedStates, setSelectedStates] = useState<string[]>([]);
-  const [includeKeywords, setIncludeKeywords] = useState<string[]>([]);
-  const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [isRunning, setIsRunning] = useState(false);
-  const [cycleCount, setCycleCount] = useState(0);
-  const [activeUrl, setActiveUrl] = useState('');
-  const [nextFireTime, setNextFireTime] = useState<number | null>(null);
-  const [registeredDeviceCount, setRegisteredDeviceCount] = useState(0);
-
-  const settingsLoadedRef = useRef(false);
-  const devicesUnsubRef = useRef<Unsubscribe | null>(null);
-
-  const toggleStateSelection = (state: string) => {
-    setSelectedStates((current) =>
-      current.includes(state)
-        ? current.filter((value) => value !== state)
-        : [...current, state]
-    );
-  };
-
-  const refreshBackgroundState = useCallback(() => {
-    chrome.runtime.sendMessage({ type: 'GET_TIMER_STATE' }, (state: TimerState | undefined) => {
-      if (!state) return;
-      setIsRunning(state.running);
-      setCycleCount(state.cycleCount || 0);
-      setActiveUrl(state.url || '');
-      if (state.nextFireTime) {
-        const remaining = Math.max(0, Math.ceil((state.nextFireTime - Date.now()) / 1000));
-        setTimeLeft(remaining);
-        setNextFireTime(state.nextFireTime);
-      } else {
-        setTimeLeft(0);
-        setNextFireTime(null);
-      }
-    });
-  }, []);
-
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem('im-extension-settings') || '{}'
-      ) as ExtensionSettings;
-      if (saved.inputSeconds !== undefined) setInputSeconds(saved.inputSeconds);
-      if (saved.minPrice !== undefined) setMinPrice(saved.minPrice);
-      if (saved.minQuantity !== undefined) setMinQuantity(saved.minQuantity);
-      if (saved.minTimePassed !== undefined) setMinTimePassed(saved.minTimePassed);
-      if (saved.selectedStates !== undefined) setSelectedStates(saved.selectedStates);
-      if (saved.includeKeywords !== undefined) setIncludeKeywords(saved.includeKeywords);
-      if (saved.excludeKeywords !== undefined) setExcludeKeywords(saved.excludeKeywords);
-      if (saved.phoneNumber !== undefined) setPhoneNumber(saved.phoneNumber);
-      if (saved.testMode !== undefined) setTestMode(saved.testMode);
-    } catch {
-      // ignore malformed settings
-    }
-    settingsLoadedRef.current = true;
-
-    const interval = setInterval(() => refreshBackgroundState(), 1000);
-    return () => clearInterval(interval);
-  }, [refreshBackgroundState]);
-
-  useEffect(() => {
-    if (!settingsLoadedRef.current) return;
-    const settings: ExtensionSettings = {
-      inputSeconds,
-      minPrice,
-      minQuantity,
-      minTimePassed,
-      selectedStates,
-      includeKeywords,
-      excludeKeywords,
-      phoneNumber,
-      testMode,
-    };
-    localStorage.setItem('im-extension-settings', JSON.stringify(settings));
-  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, includeKeywords, excludeKeywords, phoneNumber, testMode]);
-
-  useEffect(() => {
-    const app = getFirebaseApp();
-    const db = getDatabase(app);
-    const devicesRef = ref(db, `devices/${googleUser.uid}`);
-
-    devicesUnsubRef.current = onValue(devicesRef, (snap) => {
-      const devices = (snap.val() || {}) as Record<string, DeviceRecord>;
-      const registeredDevices = Object.values(devices)
-        .filter((d): d is DeviceRecord & { fcmToken: string } => Boolean(d.fcmToken))
-        .map((d) => ({ token: d.fcmToken, notificationStyle: d.notificationStyle ?? 'headsup' }));
-      chrome.storage.local.set({ registeredDevices });
-      setRegisteredDeviceCount(registeredDevices.length);
-    });
-
-    return () => {
-      if (devicesUnsubRef.current) {
-        devicesUnsubRef.current();
-        devicesUnsubRef.current = null;
-      }
-    };
-  }, [googleUser]);
-
-  const formatTime = (seconds: number): string => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  };
+  const settings = useSettings();
+  const timer = useTimer();
+  const { registeredDeviceCount } = useDevices(googleUser);
 
   const handleStart = () => {
-    const seconds = parseInt(inputSeconds, 10) || 0;
-    if (seconds > 0) {
-      const minPriceValue = minPrice.trim() ? Number(minPrice) : null;
-      const minQuantityValue = minQuantity.trim() ? Number(minQuantity) : null;
-      const minTimePassedValue = minTimePassed.trim() ? Number(minTimePassed) : null;
-      const filters = {
-        minPrice: Number.isFinite(minPriceValue) ? minPriceValue : null,
-        minQuantity: Number.isFinite(minQuantityValue) ? minQuantityValue : null,
-        minTimePassed: Number.isFinite(minTimePassedValue) ? minTimePassedValue : null,
-        states: selectedStates.length ? selectedStates : null,
-        includeKeywords: includeKeywords.length ? includeKeywords : null,
-        excludeKeywords: excludeKeywords.length ? excludeKeywords : null,
-      };
-      setTimeLeft(seconds);
-      setIsRunning(true);
-      setCycleCount(0);
-      sendBackgroundCommand('START_TIMER', { seconds, filters, phoneNumber, testMode });
-    }
-  };
-
-  const handleStop = () => {
-    setIsRunning(false);
-    setTimeLeft(0);
-    sendBackgroundCommand('STOP_TIMER');
-  };
-
-  const handleReset = () => {
-    setIsRunning(false);
-    setTimeLeft(0);
-    setCycleCount(0);
-    sendBackgroundCommand('STOP_TIMER');
-  };
-
-  const handleTestNotification = async () => {
-    chrome.storage.local.get(['registeredDevices'], async (result) => {
-      const registeredDevices = (result.registeredDevices as Array<{ token: string; notificationStyle: string }> | undefined) ?? [];
-      if (registeredDevices.length === 0) {
-        console.warn('[Test] No registered phones');
-        return;
-      }
-      const mockLead = {
-        title: 'Test Lead — Mock Purchase',
-        buyerName: 'Test User',
-        buyerMobile: '9000000000',
-        quantity: '100',
-        city: 'Mumbai',
-        state: 'Maharashtra',
-      };
-      const testBody = 'Buyer: Test User — Mumbai, Maharashtra';
-      await Promise.all(
-        registeredDevices.map(async ({ token, notificationStyle }) => {
-          const isPhonecall = notificationStyle === 'phonecall';
-          // Mirror the production send (service-worker.js): phonecall = DATA-ONLY
-          // push that the native service turns into a full-screen intent; headsup
-          // = normal notification push on the banner channel.
-          const expoMessage = isPhonecall
-            ? {
-                to: token,
-                data: { type: 'phonecall', title: mockLead.title, body: testBody, lead: JSON.stringify(mockLead) },
-                priority: 'high',
-                _contentAvailable: true,
-              }
-            : {
-                to: token,
-                title: mockLead.title,
-                body: testBody,
-                channelId: CHANNEL_BANNER,
-                priority: 'high',
-                sound: 'default',
-                data: mockLead,
-              };
-          const res = await fetch('https://exp.host/--/api/v2/push/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(expoMessage),
-          });
-          const data = await res.json();
-          console.log('[Test] Expo response:', data, isPhonecall ? 'phonecall(data-only)' : `banner(${CHANNEL_BANNER})`);
-        })
-      );
-    });
+    const payload = settings.buildStartPayload();
+    if (payload) timer.start(payload);
   };
 
   const handleExportCSV = () => {
     chrome.runtime.sendMessage({ type: 'GET_ALL_LEADS' }, (response: { leads?: LeadRecord[] } = {}) => {
-      const { leads } = response;
+      const leads = response.leads;
       if (!leads || leads.length === 0) {
         alert('No leads recorded yet.');
         return;
       }
-      const escape = (v: unknown): string => {
-        if (v == null) return '';
-        const s = String(v);
-        return s.includes(',') || s.includes('"') || s.includes('\n')
-          ? `"${s.replace(/"/g, '""')}"`
-          : s;
-      };
-      const headers = [
-        'Lead ID', 'Title', 'Price (₹)', 'Quantity', 'Age (min)', 'City', 'State',
-        'Category ID', 'First Seen Date', 'First Seen Time', 'Reason',
-        'Filter Min Price', 'Filter Min Qty', 'Filter Max Age (min)', 'Filter States',
-        'Filter Include Kw', 'Filter Exclude Kw',
-      ];
-      const rows = leads.map((l) =>
-        [
-          l.ETO_OFR_ID,
-          l.ETO_OFR_TITLE,
-          l.ETO_OFR_APPROX_ORDER_VALUE,
-          l.quantity,
-          l.BLDATETIME,
-          l.GLUSR_CITY,
-          l.GLUSR_STATE,
-          l.FK_GLCAT_MCAT_ID,
-          l.firstSeenDate,
-          l.firstSeenTime,
-          l.reasons,
-          l.filtersAtFirstSeen?.minPrice,
-          l.filtersAtFirstSeen?.minQuantity,
-          l.filtersAtFirstSeen?.minTimePassed,
-          l.filtersAtFirstSeen?.states?.join(' | '),
-          l.filtersAtFirstSeen?.includeKeywords?.join(' | '),
-          l.filtersAtFirstSeen?.excludeKeywords?.join(' | '),
-        ]
-          .map(escape)
-          .join(',')
-      );
-      const csv = [headers.join(','), ...rows].join('\n');
+      const csv = leadsToCsv(leads);
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -280,17 +57,6 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
       a.download = `indiamart-leads-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    });
-  };
-
-  const sendBackgroundCommand = (
-    type: BackgroundCommandType,
-    payload: Partial<StartTimerPayload> = {}
-  ) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0]?.id) return;
-      const tab = tabs[0];
-      chrome.runtime.sendMessage({ type, tabId: tab.id, url: tab.url, ...payload });
     });
   };
 
@@ -303,47 +69,47 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
         onSignOut={onSignOut}
       />
 
-      <TimerHero timeLeft={timeLeft} isRunning={isRunning} formatTime={formatTime} />
+      <TimerHero timeLeft={timer.timeLeft} isRunning={timer.isRunning} formatTime={formatTime} />
 
       <TimerControls
-        inputSeconds={inputSeconds}
-        setInputSeconds={setInputSeconds}
-        phoneNumber={phoneNumber}
-        setPhoneNumber={setPhoneNumber}
-        testMode={testMode}
-        setTestMode={setTestMode}
-        isRunning={isRunning}
+        inputSeconds={settings.inputSeconds}
+        setInputSeconds={settings.setInputSeconds}
+        phoneNumber={settings.phoneNumber}
+        setPhoneNumber={settings.setPhoneNumber}
+        testMode={settings.testMode}
+        setTestMode={settings.setTestMode}
+        isRunning={timer.isRunning}
         onStart={handleStart}
-        onStop={handleStop}
-        onReset={handleReset}
+        onStop={timer.stop}
+        onReset={timer.reset}
       />
 
       <LeadFilters
-        minPrice={minPrice}
-        setMinPrice={setMinPrice}
-        minQuantity={minQuantity}
-        setMinQuantity={setMinQuantity}
-        minTimePassed={minTimePassed}
-        setMinTimePassed={setMinTimePassed}
-        selectedStates={selectedStates}
-        toggleStateSelection={toggleStateSelection}
+        minPrice={settings.minPrice}
+        setMinPrice={settings.setMinPrice}
+        minQuantity={settings.minQuantity}
+        setMinQuantity={settings.setMinQuantity}
+        minTimePassed={settings.minTimePassed}
+        setMinTimePassed={settings.setMinTimePassed}
+        selectedStates={settings.selectedStates}
+        toggleStateSelection={settings.toggleStateSelection}
         stateOptions={STATE_OPTIONS}
-        includeKeywords={includeKeywords}
-        setIncludeKeywords={setIncludeKeywords}
-        excludeKeywords={excludeKeywords}
-        setExcludeKeywords={setExcludeKeywords}
-        isRunning={isRunning}
+        includeKeywords={settings.includeKeywords}
+        setIncludeKeywords={settings.setIncludeKeywords}
+        excludeKeywords={settings.excludeKeywords}
+        setExcludeKeywords={settings.setExcludeKeywords}
+        isRunning={timer.isRunning}
       />
 
       <StatusFooter
-        cycleCount={cycleCount}
-        isRunning={isRunning}
-        activeUrl={activeUrl}
-        nextFireTime={nextFireTime}
+        cycleCount={timer.cycleCount}
+        isRunning={timer.isRunning}
+        activeUrl={timer.activeUrl}
+        nextFireTime={timer.nextFireTime}
       />
 
       {registeredDeviceCount > 0 && (
-        <DevicesSection onTestNotification={handleTestNotification} />
+        <DevicesSection onTestNotification={sendTestNotification} />
       )}
     </PageShell>
   );
