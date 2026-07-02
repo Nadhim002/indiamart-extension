@@ -1,3 +1,9 @@
+> **⚠️ Reference doc — read [../README.md](../README.md) and [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) first.**
+> This file is kept as the **IndiaMART API reference** (the `getBLDisplayData` request/response shape
+> and lead fields, captured from a HAR). The "About/Tech Stack/Flow" notes below are the *original
+> spec* and predate the current implementation — trust the README/ARCHITECTURE for how the code
+> actually works today. In particular: the extension does **not** use `@crxjs/vite-plugin`.
+
 About The Project 
 
 This project is indiamart chrome extension which load the leads data on some interval and filter out the lead using some filter criteria given by the user and buys the leads which matches the criteria's
@@ -5,8 +11,8 @@ This project is indiamart chrome extension which load the leads data on some int
 Tech Stack 
  - Framework: React.
  - Language: TypeScript.
- - Styling: Tailwind CSS or Shadcn/ui.
- - Build Tool/Bundler: Vite + @crxjs/vite-plugin.
+ - Styling: Tailwind CSS + shadcn/ui (Radix primitives).
+ - Build Tool/Bundler: Vite (plain — three build passes for panel, service worker, and inject; no @crxjs plugin).
 
 UI should contain 
 - Time interval input - ( Frequency in which the API request happens )
