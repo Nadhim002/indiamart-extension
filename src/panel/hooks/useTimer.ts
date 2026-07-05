@@ -1,15 +1,36 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { BackgroundCommandType, StartTimerPayload, TimerState } from '@/types';
 
+interface StartResponse {
+  ok: boolean;
+  reason?: string;
+  nextFireTime?: number;
+}
+
 // Sends a command to the service worker, tagged with the active tab. START_TIMER
 // carries the timer payload; STOP_TIMER carries nothing extra.
-function sendBackgroundCommand(type: BackgroundCommandType, payload: Partial<StartTimerPayload> = {}) {
+function sendBackgroundCommand(
+  type: BackgroundCommandType,
+  payload: Partial<StartTimerPayload> = {},
+  onResponse?: (res: StartResponse | undefined) => void
+) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     if (!tab?.id) return;
-    chrome.runtime.sendMessage({ type, tabId: tab.id, url: tab.url, ...payload });
+    const msg = { type, tabId: tab.id, url: tab.url, ...payload };
+    if (onResponse) {
+      chrome.runtime.sendMessage(msg, onResponse);
+    } else {
+      chrome.runtime.sendMessage(msg);
+    }
   });
 }
+
+const REASON_MESSAGE: Record<string, string> = {
+  'no-account': 'No active subscription. Contact the admin for access.',
+  expired: 'Your subscription has expired. Contact the admin to renew.',
+  'device-limit': 'This device isn’t registered. Open the panel to free a device seat.',
+};
 
 // Owns the live timer view: polls the service worker once a second for the
 // authoritative timer state and exposes start/stop/reset commands. The caller
@@ -46,7 +67,14 @@ export function useTimer() {
     setTimeLeft(payload.seconds);
     setIsRunning(true);
     setCycleCount(0);
-    sendBackgroundCommand('START_TIMER', payload);
+    sendBackgroundCommand('START_TIMER', payload, (res) => {
+      if (res && !res.ok) {
+        // Worker refused (subscription/device gate) — revert optimistic state.
+        setIsRunning(false);
+        setTimeLeft(0);
+        alert(REASON_MESSAGE[res.reason ?? ''] ?? 'Cannot start — subscription or device check failed.');
+      }
+    });
   };
 
   const stop = () => {

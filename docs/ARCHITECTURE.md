@@ -83,9 +83,42 @@ Four independent stores, each with a distinct job (there is deliberately no unif
 | Store | Owner | Holds |
 |---|---|---|
 | `localStorage` (`im-extension-settings`) | panel (`useSettings`) | the user's filter/timer settings |
-| `chrome.storage.local` | panel ↔ worker | `registeredDevices`, `googleUID`, `googleIdToken` |
+| `chrome.storage.local` | panel ↔ worker | `registeredDevices`, `googleUID`, `googleIdToken`, `googleEmail`, `sanitizedEmail`, `installId`, `entitlementCache` |
 | **IndexedDB** (`indiamart_leads`) | worker | every seen lead + reason + filter snapshot (CSV source) |
-| **Firebase RTDB** | both | `leads/{uid}/new` (out-of-band push channel), `devices/{uid}` (read by panel) |
+| **Firebase RTDB** | both | `accounts/{sanitizedEmail}/…` — subscription, computers, phones, `leads/new` (see below) |
+
+---
+
+## Account-centric schema & entitlement (monetization)
+
+The product is gated by an admin-managed subscription. Everything for an account lives under one
+email-keyed subtree; the admin dashboard (a separate client-side app) is the only writer of
+subscription data, enforced by Firebase security rules (`firebase-security-rules.json` at repo root).
+
+```
+accounts/{sanitizedEmail}/
+  profile/       { email, uid, businessName, gstNumber }
+  subscription/  { tier, lastPaidDate, expiryDate, maxComputers, maxPhones, createdAt, updatedAt }
+  computers/{installId}/  { name, registeredAt, lastSeen }   # extension seats
+  phones/{deviceId}/      { name, fcmToken, notificationStyle, lastSeen }  # phone seats
+  leads/new/{pushId}      # purchased-lead push channel (was leads/{uid}/new)
+```
+
+- **Enforcement is client-side** (see [ADR-0004](adr/0004-client-side-entitlement-and-account-schema.md)):
+  the extension can't be proxied through a server because it scrapes with the seller's own session.
+  The security rules keep `subscription` read-only to the user and writable only by the admin email.
+- **`sanitizeEmail`** (`src/shared/email.ts`) maps an email to a legal RTDB key (mirrored in the phone
+  app and dashboard). **`installId`** (`src/panel/lib/installId.ts`) is a per-browser UUID = one
+  computer seat, mirroring the phone's `deviceId`.
+- **Check + cache** (`src/shared/entitlement.ts`): `evaluateSubscription` is pure (valid = record
+  exists and `expiryDate` in the future; **tier is only a label**). The panel subscribes live via
+  `useEntitlement` and mirrors each verdict into `chrome.storage.local` (`entitlementCache`), which the
+  worker trusts for **6 hours** before re-reading.
+- **Full lockout:** the panel shows `LockoutPage` when invalid; the worker's `checkRunAllowed` gates
+  `START_TIMER` and re-checks each alarm tick, stopping a running timer if entitlement flips.
+- **Device seats:** `useAccountDevices` registers this `installId` only when a seat is free (never
+  before the roster loads). At the limit the panel shows `DeviceLimitPage` — pure self-service:
+  remove a listed computer (each with its `lastSeen`) to free a seat; the admin can also remove seats.
 
 ---
 
@@ -112,7 +145,7 @@ sequenceDiagram
   end
   M-->>W: { mappedData, filteredIds, purchaseDetails }
   W->>DB: upsert every lead (reason = rejectionReason or "Purchased")
-  W->>FB: write purchased lead to leads/{uid}/new
+  W->>FB: write purchased lead to accounts/{sanitizedEmail}/leads/new
   W->>EX: buildExpoMessage → push to each registered device
   W->>A: reschedule next tick
 ```
@@ -133,8 +166,9 @@ globals (`window.__im_utils`, `fetchGlidScriptJSFile`) — it cannot import from
 `DashboardPage` is thin — it composes three hooks and two pure helpers:
 
 - `useSettings` — loads/saves settings (localStorage) and builds the `START_TIMER` payload.
-- `useTimer` — polls `GET_TIMER_STATE`; exposes `start`/`stop`/`reset`.
-- `useDevices` — subscribes to `devices/{uid}` in RTDB, mirrors the token list into `chrome.storage`.
+- `useTimer` — polls `GET_TIMER_STATE`; exposes `start`/`stop`/`reset` (surfaces worker gate refusals).
+- `useEntitlement` — subscribes to `accounts/{email}/subscription`; gates the app (lockout) and keeps the worker's cache fresh.
+- `useAccountDevices` — subscribes to this account's `computers`/`phones`, registers this `installId` seat, mirrors phone tokens into `chrome.storage`, exposes rename/remove + the seat-limit state.
 - `lib/leadsCsv.ts` — pure `leadsToCsv(leads)`.
 - `lib/testNotification.ts` — fires a mock push via the shared `buildExpoMessage`.
 
@@ -148,10 +182,14 @@ repos sharing three formats **by convention, not shared code** (see
 
 1. **Channel IDs** (`src/shared/channels.ts` ↔ mobile `channels.ts`) — a mismatch makes Android
    silently drop the notification.
-2. **Firebase project** — both point at the same RTDB. The extension **writes** `leads/{uid}/new`
-   and **reads** `devices/{uid}`; the phone **writes** its `devices/{uid}/{deviceId}` record and
-   **reads** `leads/{uid}/new`.
+2. **Firebase project + account schema** — both point at the same RTDB and the same
+   `accounts/{sanitizedEmail}` tree. The extension **writes** `accounts/{email}/leads/new` and
+   `computers/{installId}`, and **reads** `phones`; the phone **writes** `phones/{deviceId}` and
+   **reads** `leads/new`. The `sanitizeEmail` mapping must be **identical** across the extension,
+   phone, and admin dashboard, or the clients won't meet.
 3. **Expo push payload** (`src/shared/pushPayload.ts`) — the shape the phone must understand
    (`phonecall` = data-only full-screen intent; otherwise a banner notification).
+4. **Entitlement model** — `subscription` fields and `evaluateSubscription` semantics are duplicated
+   in the phone (`mobile-app/entitlement.ts`); keep them in sync.
 
 Change any of these and you must update both repos together.

@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react';
 import type { User } from 'firebase/auth';
 import './index.css';
 import { getAuth, GoogleAuthProvider, signInWithCredential, signOut, onAuthStateChanged, onIdTokenChanged } from 'firebase/auth';
-import { forceWebSockets } from 'firebase/database';
+import { forceWebSockets, getDatabase, ref, set } from 'firebase/database';
 import { getFirebaseApp } from '@/lib/firebase';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
+import LockoutPage from '@/pages/LockoutPage';
+import { useEntitlement } from '@/hooks/useEntitlement';
+import { sanitizeEmail } from '@shared/email';
 
 forceWebSockets();
 
@@ -36,10 +39,20 @@ function getGoogleAccessToken(): Promise<string> {
   });
 }
 
+function LoadingScreen() {
+  return (
+    <main className="flex min-h-screen items-center justify-center">
+      <p className="text-sm text-muted-foreground">Checking subscription…</p>
+    </main>
+  );
+}
+
 export default function App() {
   const [googleUser, setGoogleUser] = useState<User | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState('');
+
+  const entitlement = useEntitlement(googleUser);
 
   useEffect(() => {
     const app = getFirebaseApp();
@@ -48,14 +61,27 @@ export default function App() {
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       setGoogleUser(user);
       if (!user) {
-        chrome.storage.local.remove(['googleUID', 'googleIdToken', 'registeredFcmTokens']);
+        chrome.storage.local.remove([
+          'googleUID',
+          'googleIdToken',
+          'registeredFcmTokens',
+          'registeredDevices',
+          'googleEmail',
+          'sanitizedEmail',
+          'entitlementCache',
+        ]);
       }
     });
 
     const unsubToken = onIdTokenChanged(auth, async (user) => {
       if (!user) return;
       const idToken = await user.getIdToken();
-      chrome.storage.local.set({ googleUID: user.uid, googleIdToken: idToken });
+      const patch: Record<string, string> = { googleUID: user.uid, googleIdToken: idToken };
+      if (user.email) {
+        patch.googleEmail = user.email;
+        patch.sanitizedEmail = sanitizeEmail(user.email);
+      }
+      chrome.storage.local.set(patch);
     });
 
     return () => {
@@ -63,6 +89,14 @@ export default function App() {
       unsubToken();
     };
   }, []);
+
+  // Stamp profile.uid so the account links to leads/phones. Only when the
+  // account actually exists (not for un-onboarded, locked-out users).
+  useEffect(() => {
+    if (!googleUser?.email || !entitlement || entitlement.reason === 'no-account') return;
+    const db = getDatabase(getFirebaseApp());
+    void set(ref(db, `accounts/${sanitizeEmail(googleUser.email)}/profile/uid`), googleUser.uid);
+  }, [googleUser, entitlement]);
 
   const handleSignIn = async () => {
     setSignInError('');
@@ -96,5 +130,13 @@ export default function App() {
     );
   }
 
-  return <DashboardPage googleUser={googleUser} onSignOut={handleSignOut} />;
+  if (!entitlement) {
+    return <LoadingScreen />;
+  }
+
+  if (!entitlement.valid) {
+    return <LockoutPage reason={entitlement.reason} email={googleUser.email} onSignOut={handleSignOut} />;
+  }
+
+  return <DashboardPage googleUser={googleUser} entitlement={entitlement} onSignOut={handleSignOut} />;
 }

@@ -4,12 +4,14 @@ import TimerHero from '@/components/TimerHero';
 import TimerControls from '@/components/TimerControls';
 import LeadFilters from '@/components/LeadFilters';
 import StatusFooter from '@/components/StatusFooter';
-import DevicesSection from '@/components/DevicesSection';
+import MyDevices from '@/components/MyDevices';
 import PageShell from '@/components/PageShell';
+import DeviceLimitPage from '@/pages/DeviceLimitPage';
 import type { LeadRecord } from '@/types';
+import type { Entitlement } from '@shared/types';
 import { useSettings } from '@/hooks/useSettings';
 import { useTimer } from '@/hooks/useTimer';
-import { useDevices } from '@/hooks/useDevices';
+import { useAccountDevices } from '@/hooks/useAccountDevices';
 import { leadsToCsv } from '@/lib/leadsCsv';
 import { sendTestNotification } from '@/lib/testNotification';
 
@@ -22,6 +24,7 @@ const STATE_OPTIONS = [
 
 interface DashboardPageProps {
   googleUser: User;
+  entitlement: Entitlement;
   onSignOut: () => void;
 }
 
@@ -32,10 +35,10 @@ function formatTime(seconds: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export default function DashboardPage({ googleUser, onSignOut }: DashboardPageProps) {
+export default function DashboardPage({ googleUser, entitlement, onSignOut }: DashboardPageProps) {
   const settings = useSettings();
   const timer = useTimer();
-  const { registeredDeviceCount } = useDevices(googleUser);
+  const devices = useAccountDevices(googleUser, entitlement);
 
   const handleStart = () => {
     const payload = settings.buildStartPayload();
@@ -60,11 +63,25 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
     });
   };
 
+  // Entitled, but this computer has no seat: block with the self-service
+  // removal screen until a slot is freed (then registration happens on its own).
+  if (devices.loaded && !devices.seatAvailable) {
+    return (
+      <DeviceLimitPage
+        computers={devices.computers}
+        maxComputers={devices.maxComputers}
+        onRename={devices.renameDevice}
+        onRemove={devices.removeDevice}
+        onSignOut={onSignOut}
+      />
+    );
+  }
+
   return (
     <PageShell>
       <PageHeader
         email={googleUser.email}
-        deviceCount={registeredDeviceCount}
+        deviceCount={devices.phoneCount}
         onExportCSV={handleExportCSV}
         onSignOut={onSignOut}
       />
@@ -108,9 +125,15 @@ export default function DashboardPage({ googleUser, onSignOut }: DashboardPagePr
         nextFireTime={timer.nextFireTime}
       />
 
-      {registeredDeviceCount > 0 && (
-        <DevicesSection onTestNotification={sendTestNotification} />
-      )}
+      <MyDevices
+        computers={devices.computers}
+        phones={devices.phones}
+        maxComputers={devices.maxComputers}
+        maxPhones={devices.maxPhones}
+        onRename={devices.renameDevice}
+        onRemove={devices.removeDevice}
+        onTestNotification={sendTestNotification}
+      />
     </PageShell>
   );
 }

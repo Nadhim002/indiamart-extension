@@ -2,13 +2,52 @@ import { FIREBASE_CONFIG } from '@shared/firebaseConfig';
 import { CHANNEL_BANNER } from '@shared/channels';
 import { buildExpoMessage } from '@shared/pushPayload';
 import { rejectionReason } from '@shared/leadPolicy';
+import { sanitizeEmail } from '@shared/email';
+import { getEntitlement } from '@shared/entitlement';
+
+function getLocal(keys) {
+  return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
+}
+
+// Entitlement + device-seat gate for starting/continuing automation. Returns
+// { ok } or { ok:false, reason }. Enforcement is client-side (see ADR); the
+// admin email grants dashboard access only, so there is no bypass here.
+async function checkRunAllowed() {
+  const { googleEmail, googleIdToken, installId } = await getLocal([
+    'googleEmail',
+    'googleIdToken',
+    'installId',
+  ]);
+  if (!googleEmail || !googleIdToken) return { ok: false, reason: 'no-account' };
+
+  const entitlement = await getEntitlement(googleEmail, googleIdToken);
+  if (!entitlement.valid) return { ok: false, reason: entitlement.reason };
+
+  // This computer must hold a registered seat.
+  try {
+    const key = sanitizeEmail(googleEmail);
+    const res = await fetch(
+      `${FIREBASE_CONFIG.databaseURL}/accounts/${key}/computers.json?auth=${googleIdToken}`
+    );
+    if (res.ok) {
+      const computers = (await res.json()) || {};
+      if (!installId || !computers[installId]) return { ok: false, reason: 'device-limit' };
+    }
+  } catch (e) {
+    // Assume Firebase is up; a rare transient error shouldn't block a valid sub.
+    console.warn('[Entitlement] seat check failed, allowing:', e);
+  }
+  return { ok: true };
+}
 
 async function sendLeadNotifications(purchasedLeads) {
-  const { registeredDevices = [], googleUID, googleIdToken } = await new Promise((resolve) =>
-    chrome.storage.local.get(['registeredDevices', 'googleUID', 'googleIdToken'], resolve)
-  );
+  const { registeredDevices = [], googleEmail, googleIdToken } = await getLocal([
+    'registeredDevices',
+    'googleEmail',
+    'googleIdToken',
+  ]);
 
-  if (!googleUID || !googleIdToken) {
+  if (!googleEmail || !googleIdToken) {
     console.warn('[FCM] Not signed in — skipping notifications');
     return;
   }
@@ -18,6 +57,7 @@ async function sendLeadNotifications(purchasedLeads) {
   }
 
   const DB_URL = FIREBASE_CONFIG.databaseURL;
+  const accountKey = sanitizeEmail(googleEmail);
 
   for (const lead of purchasedLeads) {
     const payload = {
@@ -32,7 +72,7 @@ async function sendLeadNotifications(purchasedLeads) {
 
     // Write to Firebase so phone's real-time listener also picks it up
     try {
-      await fetch(`${DB_URL}/leads/${googleUID}/new.json?auth=${googleIdToken}`, {
+      await fetch(`${DB_URL}/accounts/${accountKey}/leads/new.json?auth=${googleIdToken}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -146,8 +186,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  switch (message.type) {
-    case 'START_TIMER':
+  if (message.type === 'START_TIMER') {
+    // Gate automation on a valid subscription + a registered device seat.
+    checkRunAllowed().then((verdict) => {
+      if (!verdict.ok) {
+        sendResponse({ ok: false, reason: verdict.reason });
+        return;
+      }
       activeTabId = message.tabId;
       activeTabUrl = message.url || null;
       timerSeconds = message.seconds || 0;
@@ -159,8 +204,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       nextFireTime = Date.now() + timerSeconds * 1000;
       scheduleAlarm();
       sendResponse({ ok: true, nextFireTime, cycleCount });
-      break;
+    });
+    return true; // async sendResponse
+  }
 
+  switch (message.type) {
     case 'STOP_TIMER':
       timerRunning = false;
       nextFireTime = null;
@@ -183,6 +231,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== 'timer-alarm' || !timerRunning || !activeTabId) return;
+
+  // Re-validate entitlement each cycle; stop automation if it flips invalid
+  // (e.g. subscription expired or the device seat was removed).
+  checkRunAllowed().then((verdict) => {
+    if (!verdict.ok) {
+      console.warn('[Entitlement] stopping timer:', verdict.reason);
+      timerRunning = false;
+      nextFireTime = null;
+      chrome.alarms.clear('timer-alarm');
+    }
+  });
 
   chrome.tabs.get(activeTabId, (tab) => {
     if (chrome.runtime.lastError || !tab) {
