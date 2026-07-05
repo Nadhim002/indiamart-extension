@@ -13,7 +13,6 @@ import { useSettings } from '@/hooks/useSettings';
 import { useTimer } from '@/hooks/useTimer';
 import { useAccountDevices } from '@/hooks/useAccountDevices';
 import { leadsToCsv } from '@/lib/leadsCsv';
-import { sendTestNotification } from '@/lib/testNotification';
 
 const STATE_OPTIONS = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
@@ -132,7 +131,6 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
         maxPhones={devices.maxPhones}
         onRename={devices.renameDevice}
         onRemove={devices.removeDevice}
-        onTestNotification={sendTestNotification}
       />
     </PageShell>
   );

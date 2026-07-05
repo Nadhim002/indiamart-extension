@@ -1,16 +1,20 @@
 import { buildExpoMessage } from '@shared/pushPayload';
 
-// Fires a mock lead notification to every registered device, using the exact
-// same message shape as production (@shared/pushPayload) so the test button
-// proves the real path.
-export async function sendTestNotification(): Promise<void> {
+export interface TestResult {
+  ok: boolean;
+  reason?: string;
+}
+
+// "Mock lead" test: fires a fully fabricated lead to every registered phone,
+// using the exact same message shape as production (@shared/pushPayload). No
+// checks, no IndiaMART fetch — just proves the Expo push reaches the phone.
+export async function sendMockTestNotification(): Promise<TestResult> {
   const { registeredDevices = [] } = await new Promise<{
     registeredDevices?: Array<{ token: string; notificationStyle: string }>;
   }>((resolve) => chrome.storage.local.get(['registeredDevices'], resolve));
 
   if (registeredDevices.length === 0) {
-    console.warn('[Test] No registered phones');
-    return;
+    return { ok: false, reason: 'no-phone' };
   }
 
   const mockLead = {
@@ -42,4 +46,31 @@ export async function sendTestNotification(): Promise<void> {
       console.log('[Test] Expo response:', data, isPhonecall ? 'phonecall(data-only)' : 'banner');
     })
   );
+  return { ok: true };
+}
+
+// "Real lead" test: asks the service worker to run a real one-shot fetch against
+// the active IndiaMART tab, take the first lead, and notify with its real
+// details but a placeholder buyer (name "Test Buyer", phone 9000000000) — doing
+// every step except purchasing. The worker returns { ok, reason }.
+export function sendRealLeadTest(): Promise<TestResult> {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (!tab?.id) {
+        resolve({ ok: false, reason: 'no-tab' });
+        return;
+      }
+      chrome.runtime.sendMessage(
+        { type: 'TEST_REAL_LEAD', tabId: tab.id, url: tab.url },
+        (res: TestResult | undefined) => {
+          if (chrome.runtime.lastError || !res) {
+            resolve({ ok: false, reason: 'fetch-failed' });
+            return;
+          }
+          resolve(res);
+        }
+      );
+    });
+  });
 }

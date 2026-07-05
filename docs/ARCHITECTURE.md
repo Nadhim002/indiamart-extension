@@ -154,10 +154,14 @@ The injected fetch/buy function runs in the page's `MAIN` world (so it inherits 
 session cookies). It is **serialized and injected**, so it can only use its arguments and page
 globals (`window.__im_utils`, `fetchGlidScriptJSFile`) — it cannot import from the bundle.
 
-> **Known issue (documented, not fixed):** in the injected function `purchaseDetails` is declared
-> inside the `if (enableLeadBuying)` block but read in the outer return via a `typeof` guard, so it
-> is always `[]`. As a result the Expo push with buyer details is not currently sent from the
-> purchase path. Fixing it is a one-line hoist — tracked as a deliberate follow-up.
+The injected fetch/buy function is defined once at module scope as `injectedFetchAndBuy(filters,
+phoneNumber, enableLeadBuying)` and shared by the alarm tick and the `TEST_REAL_LEAD` handler (both
+pass it to `executeScript`). Because it's injected, it may only use its args and page globals — it
+cannot close over module vars.
+
+> **Fixed:** `purchaseDetails` was previously declared inside the `if (enableLeadBuying)` block and
+> read via a `typeof` guard at the return, so it was always `[]` and the buyer-details push never
+> fired from the purchase path. It's now hoisted (`let purchaseDetails = []`) and returned correctly.
 
 ---
 
@@ -170,7 +174,13 @@ globals (`window.__im_utils`, `fetchGlidScriptJSFile`) — it cannot import from
 - `useEntitlement` — subscribes to `accounts/{email}/subscription`; gates the app (lockout) and keeps the worker's cache fresh.
 - `useAccountDevices` — subscribes to this account's `computers`/`phones`, registers this `installId` seat, mirrors phone tokens into `chrome.storage`, exposes rename/remove + the seat-limit state.
 - `lib/leadsCsv.ts` — pure `leadsToCsv(leads)`.
-- `lib/testNotification.ts` — fires a mock push via the shared `buildExpoMessage`.
+- `lib/testNotification.ts` — two test modes surfaced as buttons in "My Devices":
+  - **`sendMockTestNotification`** — fires a fully fabricated lead via Expo, no checks (proves the push path).
+  - **`sendRealLeadTest`** — sends `TEST_REAL_LEAD` to the worker, which runs a real one-shot fetch on
+    the active IndiaMART tab (no filtering, **no purchase**), takes the first lead, and notifies with
+    its real title/quantity/city/state but a placeholder buyer (`"Test Buyer"` / `9000000000`). It
+    delivers via **both** the Firebase `leads/new` write and the Expo push, but skips the IndexedDB
+    record and never touches the running timer. Returns `{ ok, reason }` for the panel's status line.
 
 ---
 
