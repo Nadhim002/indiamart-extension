@@ -3,6 +3,7 @@
   "name": "Indiamart Lead Notifier",
   "version": "1.0.0",
   "description": "Monitor Indiamart buy-leads and receive alerts on your phone.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzo+2VmXyKrcqPbn8ZO/hWt3F4QZeua908jYqQNGs1i0368a9M9rsUPIqaJpz/NVnCzG1ETLaAY04uOFL4VNzCeU6mDJizzKY5q4aLEMsM66yKDq4ukKptONOfgksLSwDt0th3ieOL2exesHRTOSbDn7F5EpPcWZDoYIZ0cMLvUXz+QNzXnb3brOGiSLRz0RYl7oGUK0ZE0sEH1KOlPmK15b9ZRK/uugNzIq2TCBGXk5JIkugYl9SS7uQuJ9BXiI84ku438Xw0SvDScNim90+a8hlNBduMnSswkbbdDqYpFWX/woRFIhP9Hj2awdDt13Ah6do0YGOjoh5YhLZN8U3pwIDAQAB",
   "permissions": [
     "sidePanel",
     "scripting",
