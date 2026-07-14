@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Indiamart Lead Notifier",
   "version": "1.0.0",
-  "description": "Monitor Indiamart buy-leads and receive alerts on your phone.",
+  "description": "Automatically detect and purchase matching Indiamart buy leads, then alert your phone.",
   "permissions": [
     "sidePanel",
     "scripting",
@@ -24,7 +24,7 @@
     "default_path": "panel.html"
   },
   "host_permissions": [
-    "<all_urls>",
+    "https://seller.indiamart.com/*",
     "https://*.firebaseio.com/*",
     "https://identitytoolkit.googleapis.com/*",
     "https://exp.host/*",
