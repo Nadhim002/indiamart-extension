@@ -474,15 +474,26 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying) {
         // Extract buyer contact info from purchase response to pass back to service worker
         purchaseDetails = purchaseData
           .filter(({ data }) => data != null)
-          .map(({ lead, data }) => ({
-            ETO_OFR_ID: lead.ETO_OFR_ID,
-            ETO_OFR_TITLE: lead.ETO_OFR_TITLE,
-            quantity: lead.quantity,
-            GLUSR_CITY: lead.GLUSR_CITY,
-            GLUSR_STATE: lead.GLUSR_STATE,
-            buyerMobile: data?.MOBNO ?? data?.mobile ?? data?.mob ?? null,
-            buyerName: data?.CNAME ?? data?.name ?? data?.buyer_name ?? null,
-          }));
+          .map(({ lead, data }) => {
+            // contactBuyNow returns buyer details nested under Data[0] on
+            // success, e.g. { Status: 'Success', Flag: '1', Data: [ {...} ] }.
+            const ok = data?.Status === 'Success' && data?.Flag === '1';
+            const detail = ok && Array.isArray(data?.Data) ? data.Data[0] : null;
+
+            return {
+              ETO_OFR_ID: lead.ETO_OFR_ID,
+              ETO_OFR_TITLE: lead.ETO_OFR_TITLE,
+              quantity: lead.quantity,
+              GLUSR_CITY: lead.GLUSR_CITY,
+              GLUSR_STATE: lead.GLUSR_STATE,
+              buyerMobile:
+                detail?.GLUSR_USR_PH_MOBILE ??
+                detail?.GLUSR_USR_PH_MOBILE_ALT ??
+                null,
+              buyerMobileCountry: detail?.GLUSR_USR_MOBILE_COUNTRY ?? null,
+              buyerName: detail?.GLUSR_NAME ?? null,
+            };
+          });
       }
 
       console.table({
