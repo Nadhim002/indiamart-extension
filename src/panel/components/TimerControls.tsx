@@ -69,6 +69,14 @@ export default function TimerControls({
         />
       </label>
 
+      {!testMode && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          Leads that match your filters will be purchased automatically on
+          IndiaMART using your account balance — no per-lead confirmation.
+          Enable Test mode above to preview matches without buying.
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-2 pt-1">
         <Button onClick={onStart} disabled={isRunning}>
           Start

@@ -9,6 +9,17 @@ function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
 }
 
+const INDIAMART_ORIGIN = 'https://seller.indiamart.com';
+
+function isIndiamartUrl(url) {
+  if (!url) return false;
+  try {
+    return new URL(url).origin === INDIAMART_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
 // Entitlement + device-seat gate for starting/continuing automation. Returns
 // { ok } or { ok:false, reason }. Enforcement is client-side (see ADR); the
 // admin email grants dashboard access only, so there is no bypass here.
@@ -243,6 +254,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'START_TIMER') {
+    // Automation only ever runs against the IndiaMART seller dashboard —
+    // host_permissions is scoped to seller.indiamart.com, so this also
+    // matches what chrome.scripting.executeScript is actually allowed to touch.
+    if (!isIndiamartUrl(message.url)) {
+      sendResponse({ ok: false, reason: 'not-indiamart-tab' });
+      return;
+    }
     // Gate automation on a valid subscription + a registered device seat.
     checkRunAllowed().then((verdict) => {
       if (!verdict.ok) {

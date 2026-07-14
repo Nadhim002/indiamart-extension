@@ -30,6 +30,7 @@ const REASON_MESSAGE: Record<string, string> = {
   'no-account': 'No active subscription. Contact the admin for access.',
   expired: 'Your subscription has expired. Contact the admin to renew.',
   'device-limit': 'This device isn’t registered. Open the panel to free a device seat.',
+  'not-indiamart-tab': 'Open your IndiaMART seller dashboard tab (seller.indiamart.com), then click Start.',
 };
 
 // Owns the live timer view: polls the service worker once a second for the
