@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy — Indiamart Lead Notifier</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+    line-height: 1.6;
+    color: #1a1a1a;
+  }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  .updated { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid #eee; padding-bottom: 0.3rem; }
+  ul { padding-left: 1.25rem; }
+  li { margin-bottom: 0.4rem; }
+  code { background: #f4f4f4; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em; }
+  .contact { background: #f8f8f8; border-radius: 8px; padding: 1rem 1.25rem; }
+</style>
+</head>
+<body>
+
+<h1>Privacy Policy — Indiamart Lead Notifier</h1>
+<p class="updated">Effective date: July 14, 2026</p>
+
+<p>
+  Indiamart Lead Notifier ("the extension") is a Chrome extension that monitors a
+  seller's IndiaMART account for new buy leads matching the seller's saved filters,
+  automatically claims (purchases) matching leads on IndiaMART, and sends the
+  seller a phone notification with the buyer's contact details. This policy
+  explains what data the extension collects, how it is used, and who it is
+  shared with.
+</p>
+
+<h2>1. Information We Collect</h2>
+
+<p><strong>Information you provide directly:</strong></p>
+<ul>
+  <li>Your Google account email address, used to sign in and identify your account.</li>
+  <li>The phone number(s) you register to receive lead alerts.</li>
+  <li>Your lead filter settings (minimum price, minimum quantity, maximum lead age, states, keyword filters).</li>
+  <li>Basic device information (device name/type) for each computer or phone you register, so we can enforce your device seat limit.</li>
+</ul>
+
+<p><strong>Information collected from IndiaMART on your behalf:</strong></p>
+<p>
+  When the extension is running, it reads new buy-lead data from your own,
+  already-logged-in IndiaMART seller session and — for leads that match your
+  filters — automatically purchases them using your IndiaMART account balance.
+  In the course of doing this, it collects:
+</p>
+<ul>
+  <li>The buyer's name and mobile number</li>
+  <li>The buyer's city and state</li>
+  <li>The product/lead title, requested quantity, and approximate order value</li>
+</ul>
+<p>
+  This data originates from your IndiaMART seller account, not from the buyer
+  directly, and is collected solely to notify you about leads you have already
+  chosen to purchase.
+</p>
+
+<p><strong>Authentication data:</strong></p>
+<ul>
+  <li>A Google-issued identity token, used to verify your sign-in and link your registered devices to your account.</li>
+</ul>
+
+<h2>2. How We Use This Information</h2>
+<p>We use the information described above only to:</p>
+<ul>
+  <li>Detect and automatically purchase IndiaMART buy leads matching your filters</li>
+  <li>Deliver phone notifications about purchased leads</li>
+  <li>Verify your sign-in and enforce your subscription/device seat limits</li>
+  <li>Persist your settings between sessions</li>
+</ul>
+<p>We do not use this data for advertising, profiling, or any purpose unrelated to the above.</p>
+
+<h2>3. Where Data Is Stored</h2>
+<ul>
+  <li><strong>On your device:</strong> lead history and app settings are stored locally in your browser (IndexedDB / <code>chrome.storage.local</code>).</li>
+  <li><strong>Firebase Realtime Database (Google Cloud):</strong> your account's leads, registered devices, and entitlement status are stored here so alerts can reach your phone in real time.</li>
+</ul>
+
+<h2>4. Third-Party Services</h2>
+<p>The extension shares data with the following service providers, solely to deliver the features described above:</p>
+<ul>
+  <li><strong>Google Firebase</strong> — authentication and real-time data storage.</li>
+  <li><strong>Expo Push Notification Service (exp.host)</strong> — delivers push notifications (including the buyer's name/city/state) to your registered phone(s).</li>
+  <li><strong>IndiaMART (seller.indiamart.com)</strong> — the source of lead data and the destination of lead-purchase requests, made using your own authenticated session.</li>
+</ul>
+<p>We do not sell, rent, or transfer this data to any other third party, and we do not use it to determine creditworthiness or for lending purposes.</p>
+
+<h2>5. Data Retention and Deletion</h2>
+<p>
+  Lead history and settings are retained until you clear them or uninstall the
+  extension. To request deletion of data associated with your account
+  (including Firebase-stored lead history and device registrations), contact
+  us using the details below.
+</p>
+
+<h2>6. Security</h2>
+<p>
+  Data in transit is sent over HTTPS. The extension never asks for or stores
+  your IndiaMART password — it acts within your existing, already-authenticated
+  browser session.
+</p>
+
+<h2>7. Children's Privacy</h2>
+<p>This extension is intended for business use by IndiaMART sellers and is not directed at children.</p>
+
+<h2>8. Changes to This Policy</h2>
+<p>We may update this policy from time to time. Changes will be posted on this page with a revised effective date.</p>
+
+<h2>9. Contact Us</h2>
+<div class="contact">
+  <p>Questions about this policy or requests to delete your data can be sent to:</p>
+  <p><strong>regentbagsown@gmail.com</strong></p>
+</div>
+
+</body>
+</html>
