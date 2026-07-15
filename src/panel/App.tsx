@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import type { User } from 'firebase/auth';
+import type { User } from 'firebase/auth/web-extension';
 import './index.css';
-import { getAuth, GoogleAuthProvider, signInWithCredential, signOut, onAuthStateChanged, onIdTokenChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithCredential, signOut, onAuthStateChanged, onIdTokenChanged } from 'firebase/auth/web-extension';
 import { forceWebSockets, getDatabase, ref, set } from 'firebase/database';
 import { getFirebaseApp } from '@/lib/firebase';
 import LoginPage from '@/pages/LoginPage';

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { User } from 'firebase/auth';
+import type { User } from 'firebase/auth/web-extension';
 import { getDatabase, ref, onValue, set, update, remove } from 'firebase/database';
 import { getFirebaseApp } from '@/lib/firebase';
 import { sanitizeEmail } from '@shared/email';

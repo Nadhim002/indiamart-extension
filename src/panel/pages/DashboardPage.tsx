@@ -1,4 +1,4 @@
-import type { User } from 'firebase/auth';
+import type { User } from 'firebase/auth/web-extension';
 import PageHeader from '@/components/PageHeader';
 import TimerHero from '@/components/TimerHero';
 import TimerControls from '@/components/TimerControls';
