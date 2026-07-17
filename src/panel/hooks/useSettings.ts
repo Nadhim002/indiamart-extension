@@ -13,7 +13,9 @@ export function useSettings() {
   const [minQuantity, setMinQuantity] = useState('');
   const [minTimePassed, setMinTimePassed] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [testMode, setTestMode] = useState(false);
+  // Default OFF for purchasing: `testMode` true means notify-only (no buying).
+  // Buying is an explicit opt-in the user must enable each install.
+  const [testMode, setTestMode] = useState(true);
   const [selectedStates, setSelectedStates] = useState<string[]>([]);
   const [includeKeywords, setIncludeKeywords] = useState<string[]>([]);
   const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);

@@ -55,15 +55,15 @@ export default function TimerControls({
 
       <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-input px-3 py-2">
         <span>
-          <span className="block text-sm font-medium">Test mode</span>
+          <span className="block text-sm font-medium">Enable auto-purchase</span>
           <span className="block text-xs text-muted-foreground">
-            Log matching leads without buying
+            Off = notify only. On = buy matching leads with your IndiaMART balance.
           </span>
         </span>
         <input
           type="checkbox"
-          checked={testMode}
-          onChange={(e) => setTestMode(e.target.checked)}
+          checked={!testMode}
+          onChange={(e) => setTestMode(!e.target.checked)}
           disabled={isRunning}
           className="h-4 w-4 accent-primary"
         />
@@ -71,9 +71,10 @@ export default function TimerControls({
 
       {!testMode && (
         <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          Leads that match your filters will be purchased automatically on
-          IndiaMART using your account balance — no per-lead confirmation.
-          Enable Test mode above to preview matches without buying.
+          Auto-purchase is ON. Leads that match your filters will be purchased
+          automatically on IndiaMART using your account balance — no per-lead
+          confirmation. Turn off "Enable auto-purchase" above to preview matches
+          without buying.
         </p>
       )}
 
