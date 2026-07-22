@@ -12,7 +12,7 @@ import type { EvaluableLead, LeadFilters } from './types';
 
 export function evaluateLead(lead: EvaluableLead, filters: LeadFilters): string[] {
   const reasons: string[] = [];
-  const { minPrice, minQuantity, minTimePassed, states, includeKeywords, excludeKeywords } = filters;
+  const { minPrice, minQuantity, minTimePassed, states, cities, includeKeywords, excludeKeywords } = filters;
 
   // Price OR Quantity — the check only applies if at least one threshold is set.
   if (minPrice != null || minQuantity != null) {
@@ -35,6 +35,15 @@ export function evaluateLead(lead: EvaluableLead, filters: LeadFilters): string[
   if (states && states.length > 0) {
     if (!states.includes(lead.GLUSR_STATE ?? '')) {
       reasons.push('State not selected');
+    }
+  }
+
+  // City — lead's city must be in the selected list. Options are harvested from
+  // real leads (see knownCities in the worker), so exact-match is safe: the user
+  // never types a city, so a spelling can never diverge from IndiaMART's data.
+  if (cities && cities.length > 0) {
+    if (!cities.includes(lead.GLUSR_CITY ?? '')) {
+      reasons.push('City not selected');
     }
   }
 

@@ -9,6 +9,7 @@ export interface ExtensionSettings {
   minQuantity?: string;
   minTimePassed?: string;
   selectedStates?: string[];
+  selectedCities?: string[];
   includeKeywords?: string[];
   excludeKeywords?: string[];
   phoneNumber?: string;
@@ -32,6 +33,7 @@ export interface LeadFiltersAtFirstSeen {
   minQuantity?: number | null;
   minTimePassed?: number | null;
   states?: string[];
+  cities?: string[];
   includeKeywords?: string[];
   excludeKeywords?: string[];
 }

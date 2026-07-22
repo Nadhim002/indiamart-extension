@@ -6,6 +6,7 @@ export interface LeadFilters {
   minQuantity: number | null;
   minTimePassed: number | null;
   states: string[] | null;
+  cities: string[] | null;
   includeKeywords: string[] | null;
   excludeKeywords: string[] | null;
 }
@@ -17,6 +18,7 @@ export interface EvaluableLead {
   quantity?: number | null;
   BLDATETIME?: number | null;
   GLUSR_STATE?: string | null;
+  GLUSR_CITY?: string | null;
   ETO_OFR_TITLE?: string | null;
 }
 

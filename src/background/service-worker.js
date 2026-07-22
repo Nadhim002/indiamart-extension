@@ -217,6 +217,30 @@ async function upsertLead(record) {
   });
 }
 
+// Learn the real IndiaMART city spellings by harvesting them from leads as they
+// arrive. The panel's City filter offers only these observed cities, so the
+// user picks from correctly-spelled options instead of guessing.
+//
+// This touches only the current batch (already in memory), never the whole log:
+// one small read of knownCities per cycle, and a write ONLY when a never-seen
+// city appears — which is rare once the list is warm.
+async function harvestCities(leads) {
+  const seen = leads.map((l) => (l.GLUSR_CITY || '').trim()).filter(Boolean);
+  if (seen.length === 0) return;
+  const { knownCities = [] } = await getLocal(['knownCities']);
+  const set = new Set(knownCities);
+  let changed = false;
+  for (const city of seen) {
+    if (!set.has(city)) {
+      set.add(city);
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  const sorted = Array.from(set).sort((a, b) => a.localeCompare(b));
+  await new Promise((resolve) => chrome.storage.local.set({ knownCities: sorted }, resolve));
+}
+
 async function getAllLeads() {
   const db = await openLeadsDB();
   return new Promise((resolve, reject) => {
@@ -589,6 +613,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         if (results && results[0] && !results[0].error && results[0].result) {
           const { mappedData, filteredIds, purchaseDetails = [] } = results[0].result;
           if (mappedData && filteredIds) {
+            harvestCities(mappedData).catch((err) => console.error('[Cities] harvest failed:', err));
             const filteredSet = new Set(filteredIds);
             const now = new Date();
             const firstSeenDate = now.toISOString().slice(0, 10);

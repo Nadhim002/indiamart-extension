@@ -12,6 +12,7 @@ import type { Entitlement } from '@shared/types';
 import { useSettings } from '@/hooks/useSettings';
 import { useTimer } from '@/hooks/useTimer';
 import { useAccountDevices } from '@/hooks/useAccountDevices';
+import { useKnownCities } from '@/hooks/useKnownCities';
 import { leadsToCsv } from '@/lib/leadsCsv';
 
 const STATE_OPTIONS = [
@@ -38,6 +39,7 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
   const settings = useSettings();
   const timer = useTimer();
   const devices = useAccountDevices(googleUser, entitlement);
+  const cityOptions = useKnownCities();
 
   const handleStart = () => {
     const payload = settings.buildStartPayload();
@@ -110,6 +112,9 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
         selectedStates={settings.selectedStates}
         toggleStateSelection={settings.toggleStateSelection}
         stateOptions={STATE_OPTIONS}
+        selectedCities={settings.selectedCities}
+        toggleCitySelection={settings.toggleCitySelection}
+        cityOptions={cityOptions}
         includeKeywords={settings.includeKeywords}
         setIncludeKeywords={settings.setIncludeKeywords}
         excludeKeywords={settings.excludeKeywords}
