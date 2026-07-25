@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import DeviceList from '@/components/DeviceList';
 import type { DeviceView } from '@/hooks/useAccountDevices';
-import { sendMockTestNotification, sendRealLeadTest } from '@/lib/testNotification';
+import { sendRealLeadTest } from '@/lib/testNotification';
 
 interface MyDevicesProps {
   computers: DeviceView[];
@@ -14,12 +14,10 @@ interface MyDevicesProps {
 }
 
 const REASON_TEXT: Record<string, string> = {
-  'no-phone': 'No registered phone to notify.',
   'no-tab': 'Open your IndiaMART leads page and try again.',
   'not-signed-in': 'Not signed in.',
   'fetch-failed': "Couldn't reach IndiaMART — open your leads page and retry.",
   'no-lead': 'No leads found on your IndiaMART page.',
-  'send-failed': 'Could not reach the notification service. Check your connection and try again.',
 };
 
 export default function MyDevices({
@@ -33,11 +31,11 @@ export default function MyDevices({
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const runTest = async (kind: 'mock' | 'real') => {
+  const runTest = async () => {
     setBusy(true);
     setStatus('Sending…');
     try {
-      const result = kind === 'mock' ? await sendMockTestNotification() : await sendRealLeadTest();
+      const result = await sendRealLeadTest();
       setStatus(
         result.ok
           ? '✓ Sent — check your phone'
@@ -71,11 +69,8 @@ export default function MyDevices({
       {phones.length > 0 && (
         <div className="space-y-2">
           <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" disabled={busy} onClick={() => runTest('mock')}>
-              Test with mock lead
-            </Button>
-            <Button variant="outline" className="flex-1" disabled={busy} onClick={() => runTest('real')}>
-              Test with real lead
+            <Button variant="outline" className="flex-1" disabled={busy} onClick={() => runTest()}>
+              Test notification
             </Button>
           </div>
           {status && <p className="text-xs text-muted-foreground" role="status">{status}</p>}
