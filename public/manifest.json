@@ -34,7 +34,8 @@
     "default_path": "panel.html"
   },
   "host_permissions": [
-    "https://seller.indiamart.com/*"
+    "https://seller.indiamart.com/*",
+    "https://exp.host/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://exp.host https://accounts.google.com https://oauth2.googleapis.com;"

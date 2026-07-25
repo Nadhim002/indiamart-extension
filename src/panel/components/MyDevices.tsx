@@ -19,6 +19,7 @@ const REASON_TEXT: Record<string, string> = {
   'not-signed-in': 'Not signed in.',
   'fetch-failed': "Couldn't reach IndiaMART — open your leads page and retry.",
   'no-lead': 'No leads found on your IndiaMART page.',
+  'send-failed': 'Could not reach the notification service. Check your connection and try again.',
 };
 
 export default function MyDevices({
@@ -35,13 +36,20 @@ export default function MyDevices({
   const runTest = async (kind: 'mock' | 'real') => {
     setBusy(true);
     setStatus('Sending…');
-    const result = kind === 'mock' ? await sendMockTestNotification() : await sendRealLeadTest();
-    setStatus(
-      result.ok
-        ? '✓ Sent — check your phone'
-        : REASON_TEXT[result.reason ?? ''] ?? 'Test failed.'
-    );
-    setBusy(false);
+    try {
+      const result = kind === 'mock' ? await sendMockTestNotification() : await sendRealLeadTest();
+      setStatus(
+        result.ok
+          ? '✓ Sent — check your phone'
+          : REASON_TEXT[result.reason ?? ''] ?? 'Test failed.'
+      );
+    } catch (e) {
+      // Never leave the button stuck on "Sending…" — surface the failure instead.
+      console.error('[Test] send threw:', e);
+      setStatus('Test failed — could not send. See console for details.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

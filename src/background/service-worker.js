@@ -94,7 +94,10 @@ async function sendLeadNotifications(purchasedLeads) {
 
     // Push via Expo to each registered phone (covers killed-app state).
     // The message shape lives in one place — @shared/pushPayload.
+    // NOTE: this fetch only works because https://exp.host/* is in the
+    // manifest host_permissions — without it Chrome CORS-blocks the request.
     const body = [lead.buyerName, lead.GLUSR_CITY, lead.GLUSR_STATE].filter(Boolean).join(' — ') || 'New lead purchased!';
+    const deadTokens = [];
     await Promise.all(
       registeredDevices.map(async ({ token, notificationStyle }) => {
         const isPhonecall = notificationStyle === 'phonecall';
@@ -112,12 +115,45 @@ async function sendLeadNotifications(purchasedLeads) {
             body: JSON.stringify(expoMessage),
           });
           const data = await res.json();
-          console.log('[FCM] Sent to', token.slice(0, 30) + '...', isPhonecall ? 'phonecall(data-only)' : `banner(${CHANNEL_BANNER})`, data);
+          const ticket = data?.data;
+          if (ticket?.status === 'error') {
+            console.warn('[FCM] Expo rejected', token.slice(0, 30) + '...', ticket.message, ticket.details);
+            // Dead token — the install is gone/reinstalled. Queue it for pruning.
+            if (ticket.details?.error === 'DeviceNotRegistered') deadTokens.push(token);
+          } else {
+            console.log('[FCM] Sent to', token.slice(0, 30) + '...', isPhonecall ? 'phonecall(data-only)' : `banner(${CHANNEL_BANNER})`, ticket);
+          }
         } catch (e) {
           console.error('[FCM] Failed to send to', token.slice(0, 20), e);
         }
       })
     );
+    if (deadTokens.length > 0) {
+      await pruneDeadTokens(DB_URL, accountKey, googleIdToken, deadTokens);
+    }
+  }
+}
+
+// Remove phones whose Expo token Expo reports as DeviceNotRegistered (the
+// install was removed/reinstalled). The app re-registers itself on next launch
+// (see usePhoneDevices), so this is self-healing and keeps the roster + seat
+// count accurate instead of endlessly pushing to a dead token.
+async function pruneDeadTokens(dbUrl, accountKey, idToken, deadTokens) {
+  try {
+    const res = await fetch(`${dbUrl}/accounts/${accountKey}/phones.json?auth=${idToken}`);
+    const phones = (await res.json()) || {};
+    const dead = new Set(deadTokens);
+    await Promise.all(
+      Object.entries(phones)
+        .filter(([, p]) => p && dead.has(p.fcmToken))
+        .map(([deviceId]) =>
+          fetch(`${dbUrl}/accounts/${accountKey}/phones/${deviceId}.json?auth=${idToken}`, { method: 'DELETE' })
+            .then(() => console.log('[FCM] Pruned dead phone token for device', deviceId))
+            .catch((e) => console.error('[FCM] Prune failed for', deviceId, e))
+        )
+    );
+  } catch (e) {
+    console.error('[FCM] Could not prune dead tokens:', e);
   }
 }
 
