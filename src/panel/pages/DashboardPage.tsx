@@ -5,6 +5,7 @@ import TimerControls from '@/components/TimerControls';
 import LeadFilters from '@/components/LeadFilters';
 import StatusFooter from '@/components/StatusFooter';
 import MyDevices from '@/components/MyDevices';
+import GoogleSheetsExport from '@/components/GoogleSheetsExport';
 import PageShell from '@/components/PageShell';
 import DeviceLimitPage from '@/pages/DeviceLimitPage';
 import type { LeadRecord } from '@/types';
@@ -137,6 +138,8 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
         onRename={devices.renameDevice}
         onRemove={devices.removeDevice}
       />
+
+      <GoogleSheetsExport />
     </PageShell>
   );
 }
