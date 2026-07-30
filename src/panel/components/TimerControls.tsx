@@ -9,6 +9,8 @@ interface TimerControlsProps {
   setPhoneNumber: (value: string) => void;
   testMode: boolean;
   setTestMode: (value: boolean) => void;
+  autoStartEnabled: boolean;
+  setAutoStartEnabled: (value: boolean) => void;
   isRunning: boolean;
   onStart: () => void;
   onStop: () => void;
@@ -22,6 +24,8 @@ export default function TimerControls({
   setPhoneNumber,
   testMode,
   setTestMode,
+  autoStartEnabled,
+  setAutoStartEnabled,
   isRunning,
   onStart,
   onStop,
@@ -65,6 +69,21 @@ export default function TimerControls({
           checked={!testMode}
           onChange={(e) => setTestMode(!e.target.checked)}
           disabled={isRunning}
+          className="h-4 w-4 accent-primary"
+        />
+      </label>
+
+      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-input px-3 py-2">
+        <span>
+          <span className="block text-sm font-medium">Auto-start when IndiaMART opens</span>
+          <span className="block text-xs text-muted-foreground">
+            Off = start manually each time. On = automatically starts when Chrome opens seller.indiamart.com.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={autoStartEnabled}
+          onChange={(e) => setAutoStartEnabled(e.target.checked)}
           className="h-4 w-4 accent-primary"
         />
       </label>

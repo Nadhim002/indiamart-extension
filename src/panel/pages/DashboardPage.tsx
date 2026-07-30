@@ -11,6 +11,7 @@ import DeviceLimitPage from '@/pages/DeviceLimitPage';
 import type { LeadRecord } from '@/types';
 import type { Entitlement } from '@shared/types';
 import { useSettings } from '@/hooks/useSettings';
+import { useAutoStartSetting } from '@/hooks/useAutoStartSetting';
 import { useTimer } from '@/hooks/useTimer';
 import { useAccountDevices } from '@/hooks/useAccountDevices';
 import { useKnownCities } from '@/hooks/useKnownCities';
@@ -38,6 +39,7 @@ function formatTime(seconds: number): string {
 
 export default function DashboardPage({ googleUser, entitlement, onSignOut }: DashboardPageProps) {
   const settings = useSettings();
+  const autoStart = useAutoStartSetting();
   const timer = useTimer();
   const devices = useAccountDevices(googleUser, entitlement);
   const cityOptions = useKnownCities();
@@ -97,6 +99,8 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
         setPhoneNumber={settings.setPhoneNumber}
         testMode={settings.testMode}
         setTestMode={settings.setTestMode}
+        autoStartEnabled={autoStart.autoStartEnabled}
+        setAutoStartEnabled={autoStart.setAutoStartEnabled}
         isRunning={timer.isRunning}
         onStart={handleStart}
         onStop={timer.stop}

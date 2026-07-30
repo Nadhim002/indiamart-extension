@@ -59,6 +59,14 @@ export function useSettings() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode]);
 
+  // Mirror the start payload into chrome.storage.local so the service worker
+  // (no localStorage access) has an up-to-date copy to use for auto-start,
+  // even when the panel isn't open.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    chrome.storage.local.set({ autoStartPayload: buildStartPayload() });
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode]);
+
   const toggleStateSelection = (state: string) => {
     setSelectedStates((current) =>
       current.includes(state) ? current.filter((value) => value !== state) : [...current, state]

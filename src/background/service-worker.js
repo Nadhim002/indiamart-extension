@@ -10,6 +10,14 @@ function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
 }
 
+function getSession(keys) {
+  return new Promise((resolve) => chrome.storage.session.get(keys, resolve));
+}
+
+function setSession(values) {
+  return new Promise((resolve) => chrome.storage.session.set(values, resolve));
+}
+
 const INDIAMART_ORIGIN = 'https://seller.indiamart.com';
 
 function isIndiamartUrl(url) {
@@ -404,6 +412,23 @@ let activeTestMode = false;
 
 const ENABLE_LEAD_BUYING = true;
 
+// Shared by the manual START_TIMER message handler and the auto-start trigger
+// below — both just need to set the same run-state globals and schedule the
+// first alarm.
+function beginTimer({ tabId, url, seconds, filters, phoneNumber, testMode }) {
+  activeTabId = tabId;
+  activeTabUrl = url || null;
+  timerSeconds = seconds || 0;
+  timerRunning = true;
+  cycleCount = 0;
+  activeFilters = filters || null;
+  activePhoneNumber = phoneNumber || null;
+  activeTestMode = testMode === true;
+  nextFireTime = Date.now() + timerSeconds * 1000;
+  scheduleAlarm();
+  return { ok: true, nextFireTime, cycleCount };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
 
@@ -431,17 +456,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: false, reason: verdict.reason });
         return;
       }
-      activeTabId = message.tabId;
-      activeTabUrl = message.url || null;
-      timerSeconds = message.seconds || 0;
-      timerRunning = true;
-      cycleCount = 0;
-      activeFilters = message.filters || null;
-      activePhoneNumber = message.phoneNumber || null;
-      activeTestMode = message.testMode === true;
-      nextFireTime = Date.now() + timerSeconds * 1000;
-      scheduleAlarm();
-      sendResponse({ ok: true, nextFireTime, cycleCount });
+      const result = beginTimer({
+        tabId: message.tabId,
+        url: message.url,
+        seconds: message.seconds,
+        filters: message.filters,
+        phoneNumber: message.phoneNumber,
+        testMode: message.testMode,
+      });
+      sendResponse(result);
     });
     return true; // async sendResponse
   }
@@ -804,3 +827,68 @@ function scheduleAlarm() {
     when: nextFireTime
   });
 }
+
+// In-memory fast-path guard against a same-instance double-fire.
+// chrome.storage.session.autoStartPending (cleared on browser close, but
+// survives service-worker restarts within the session) is the durable source
+// of truth for "has the one auto-start shot for this browser session already
+// been used."
+let autoStartClaimed = false;
+
+// Runs on every tab that finishes loading seller.indiamart.com. Fires the
+// saved START_TIMER payload at most once per real Chrome startup — on
+// whichever qualifying tab gets there first, regardless of whether
+// autoStartEnabled happens to be on at that moment (that's what makes it
+// "only the first indiamart tab after opening Chrome", full stop).
+async function maybeAutoStartFromTab(tabId, url) {
+  if (!isIndiamartUrl(url) || timerRunning || autoStartClaimed) return;
+
+  const { autoStartPending } = await getSession(['autoStartPending']);
+  if (!autoStartPending) return; // this session's one shot is already used
+
+  autoStartClaimed = true;
+  await setSession({ autoStartPending: false }); // claim immediately, before any more awaits
+
+  const { autoStartEnabled } = await getLocal(['autoStartEnabled']);
+  if (!autoStartEnabled) return; // setting was off at the one qualifying moment
+
+  const { autoStartPayload } = await getLocal(['autoStartPayload']);
+  if (!autoStartPayload || !autoStartPayload.seconds) return; // nothing valid saved yet
+
+  const verdict = await checkRunAllowed();
+  if (!verdict.ok) return; // silent no-op, same as a failed manual Start
+
+  if (timerRunning) return; // a manual Start may have raced ahead during the awaits above
+
+  beginTimer({
+    tabId,
+    url,
+    seconds: autoStartPayload.seconds,
+    filters: autoStartPayload.filters,
+    phoneNumber: autoStartPayload.phoneNumber,
+    testMode: autoStartPayload.testMode,
+  });
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  autoStartClaimed = false;
+  setSession({ autoStartPending: true }).then(() => {
+    // Covers a tab Chrome already restored/loaded before this listener's
+    // async work finished (e.g. a fast session restore of a pinned tab).
+    chrome.tabs.query({ url: `${INDIAMART_ORIGIN}/*` }, (tabs) => {
+      const match = tabs.find((t) => isIndiamartUrl(t.url));
+      if (match) {
+        maybeAutoStartFromTab(match.id, match.url).catch((e) =>
+          console.error('[AutoStart] startup fallback failed:', e)
+        );
+      }
+    });
+  });
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  maybeAutoStartFromTab(tabId, tab.url).catch((e) =>
+    console.error('[AutoStart] failed:', e)
+  );
+});
