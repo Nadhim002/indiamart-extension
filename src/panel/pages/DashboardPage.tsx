@@ -1,27 +1,51 @@
-import type { User } from 'firebase/auth/web-extension';
-import PageHeader from '@/components/PageHeader';
-import TimerHero from '@/components/TimerHero';
-import TimerControls from '@/components/TimerControls';
-import LeadFilters from '@/components/LeadFilters';
-import StatusFooter from '@/components/StatusFooter';
-import MyDevices from '@/components/MyDevices';
-import GoogleSheetsExport from '@/components/GoogleSheetsExport';
-import PageShell from '@/components/PageShell';
-import DeviceLimitPage from '@/pages/DeviceLimitPage';
-import type { LeadRecord } from '@/types';
-import type { Entitlement } from '@shared/types';
-import { useSettings } from '@/hooks/useSettings';
-import { useAutoStartSetting } from '@/hooks/useAutoStartSetting';
-import { useTimer } from '@/hooks/useTimer';
-import { useAccountDevices } from '@/hooks/useAccountDevices';
-import { useKnownCities } from '@/hooks/useKnownCities';
-import { leadsToCsv } from '@/lib/leadsCsv';
+import type { User } from "firebase/auth/web-extension";
+import PageHeader from "@/components/PageHeader";
+import TimerHero from "@/components/TimerHero";
+import TimerControls from "@/components/TimerControls";
+import LeadFilters from "@/components/LeadFilters";
+import StatusFooter from "@/components/StatusFooter";
+import MyDevices from "@/components/MyDevices";
+import GoogleSheetsExport from "@/components/GoogleSheetsExport";
+import PageShell from "@/components/PageShell";
+import DeviceLimitPage from "@/pages/DeviceLimitPage";
+import type { LeadRecord } from "@/types";
+import type { Entitlement } from "@shared/types";
+import { useSettings } from "@/hooks/useSettings";
+import { useAutoStartSetting } from "@/hooks/useAutoStartSetting";
+import { useTimer } from "@/hooks/useTimer";
+import { useAccountDevices } from "@/hooks/useAccountDevices";
+import { useKnownCities } from "@/hooks/useKnownCities";
+import { leadsToCsv } from "@/lib/leadsCsv";
 
 const STATE_OPTIONS = [
-  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
-  'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra',
-  'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim',
-  'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
+  "Andhra Pradesh",
+  "Arunachal Pradesh",
+  "Assam",
+  "Bihar",
+  "Chhattisgarh",
+  "Goa",
+  "Gujarat",
+  "Haryana",
+  "Himachal Pradesh",
+  "Jharkhand",
+  "Karnataka",
+  "Kerala",
+  "Madhya Pradesh",
+  "Maharashtra",
+  "Manipur",
+  "Meghalaya",
+  "Mizoram",
+  "Nagaland",
+  "Odisha",
+  "Punjab",
+  "Rajasthan",
+  "Sikkim",
+  "Tamil Nadu",
+  "Telangana",
+  "Tripura",
+  "Uttar Pradesh",
+  "Uttarakhand",
+  "West Bengal",
 ] as const;
 
 interface DashboardPageProps {
@@ -34,10 +58,14 @@ function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-export default function DashboardPage({ googleUser, entitlement, onSignOut }: DashboardPageProps) {
+export default function DashboardPage({
+  googleUser,
+  entitlement,
+  onSignOut,
+}: DashboardPageProps) {
   const settings = useSettings();
   const autoStart = useAutoStartSetting();
   const timer = useTimer();
@@ -50,21 +78,24 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
   };
 
   const handleExportCSV = () => {
-    chrome.runtime.sendMessage({ type: 'GET_ALL_LEADS' }, (response: { leads?: LeadRecord[] } = {}) => {
-      const leads = response.leads;
-      if (!leads || leads.length === 0) {
-        alert('No leads recorded yet.');
-        return;
-      }
-      const csv = leadsToCsv(leads);
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `indiamart-leads-${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+    chrome.runtime.sendMessage(
+      { type: "GET_ALL_LEADS" },
+      (response: { leads?: LeadRecord[] } = {}) => {
+        const leads = response.leads;
+        if (!leads || leads.length === 0) {
+          alert("No leads recorded yet.");
+          return;
+        }
+        const csv = leadsToCsv(leads);
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `indiamart-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      },
+    );
   };
 
   // Entitled, but this computer has no seat: block with the self-service
@@ -90,7 +121,11 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
         onSignOut={onSignOut}
       />
 
-      <TimerHero timeLeft={timer.timeLeft} isRunning={timer.isRunning} formatTime={formatTime} />
+      <TimerHero
+        timeLeft={timer.timeLeft}
+        isRunning={timer.isRunning}
+        formatTime={formatTime}
+      />
 
       <TimerControls
         inputSeconds={settings.inputSeconds}
@@ -134,6 +169,8 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
         nextFireTime={timer.nextFireTime}
       />
 
+      <GoogleSheetsExport />
+
       <MyDevices
         computers={devices.computers}
         phones={devices.phones}
@@ -142,8 +179,6 @@ export default function DashboardPage({ googleUser, entitlement, onSignOut }: Da
         onRename={devices.renameDevice}
         onRemove={devices.removeDevice}
       />
-
-      <GoogleSheetsExport />
     </PageShell>
   );
 }
