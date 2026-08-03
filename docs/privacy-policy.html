@@ -25,16 +25,15 @@
 <body>
 
 <h1>Privacy Policy — Indiamart Lead Notifier</h1>
-<p class="updated">Effective date: July 29, 2026</p>
+<p class="updated">Effective date: July 14, 2026</p>
 
 <p>
   Indiamart Lead Notifier ("the extension") is a Chrome extension that monitors a
   seller's IndiaMART account for new buy leads matching the seller's saved filters,
-  automatically claims (purchases) matching leads on IndiaMART, sends the
-  seller a phone notification with the buyer's contact details, and — if the
-  seller chooses to connect it — logs each purchased lead as a row in a Google
-  Sheet the seller specifies. This policy explains what data the extension
-  collects, how it is used, and who it is shared with.
+  automatically claims (purchases) matching leads on IndiaMART, and sends the
+  seller a phone notification with the buyer's contact details. This policy
+  explains what data the extension collects, how it is used, and who it is
+  shared with.
 </p>
 
 <h2>1. Information We Collect</h2>
@@ -45,7 +44,6 @@
   <li>The phone number(s) you register to receive lead alerts.</li>
   <li>Your lead filter settings (minimum price, minimum quantity, maximum lead age, states, keyword filters).</li>
   <li>Basic device information (device name/type) for each computer or phone you register, so we can enforce your device seat limit.</li>
-  <li>If you enable Google Sheets export: the URL of the specific Google Sheet, and the tab name within it, that you choose to send purchased-lead rows to.</li>
 </ul>
 
 <p><strong>Information collected from IndiaMART on your behalf:</strong></p>
@@ -69,7 +67,6 @@
 <p><strong>Authentication data:</strong></p>
 <ul>
   <li>A Google-issued identity token, used to verify your sign-in and link your registered devices to your account.</li>
-  <li>If you enable Google Sheets export: a separate Google-issued OAuth access token, requested only when you click "Connect Google Sheets," used solely to write purchased-lead rows to the specific sheet and tab you provided.</li>
 </ul>
 
 <h2>2. How We Use This Information</h2>
@@ -79,41 +76,13 @@
   <li>Deliver phone notifications about purchased leads</li>
   <li>Verify your sign-in and enforce your subscription/device seat limits</li>
   <li>Persist your settings between sessions</li>
-  <li>If enabled: append a row (purchase date/time, product title, approximate order value, quantity, buyer name, buyer mobile, city, state) to the Google Sheet tab you specified, each time a lead is purchased</li>
 </ul>
 <p>We do not use this data for advertising, profiling, or any purpose unrelated to the above.</p>
-
-<h2>2a. Google Sheets Access (Google API Services User Data)</h2>
-<p>
-  If you choose to enable Google Sheets export, the extension requests your permission via
-  Google's OAuth flow to view and manage your Google Sheets (scope:
-  <code>https://www.googleapis.com/auth/spreadsheets</code>). This permission is used
-  <strong>exclusively</strong> to:
-</p>
-<ul>
-  <li>Confirm that the tab you named exists in the sheet you specified (creating it if it does not);</li>
-  <li>Write a header row into that tab if it is empty; and</li>
-  <li>Append one row per purchased lead to that tab.</li>
-</ul>
-<p>
-  The extension does not read, browse, list, or modify any other spreadsheet, tab, or file in
-  your Google account, and does not use this access for any purpose beyond writing the
-  purchased-lead rows described above. You can revoke this access at any time from your
-  <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account permissions page</a>,
-  or by clearing the sheet URL in the extension's settings.
-</p>
-<p>
-  Indiamart Lead Notifier's use and transfer of information received from Google APIs to any
-  other app will adhere to the
-  <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>,
-  including the Limited Use requirements.
-</p>
 
 <h2>3. Where Data Is Stored</h2>
 <ul>
   <li><strong>On your device:</strong> lead history and app settings are stored locally in your browser (IndexedDB / <code>chrome.storage.local</code>).</li>
   <li><strong>Firebase Realtime Database (Google Cloud):</strong> your account's leads, registered devices, and entitlement status are stored here so alerts can reach your phone in real time.</li>
-  <li><strong>Your own Google Sheet:</strong> if you enable Sheets export, purchased-lead rows are written directly to the specific Google Sheet you provided — a spreadsheet in your own Google account, not one we host or control.</li>
 </ul>
 
 <h2>4. Third-Party Services</h2>
@@ -122,7 +91,6 @@
   <li><strong>Google Firebase</strong> — authentication and real-time data storage.</li>
   <li><strong>Expo Push Notification Service (exp.host)</strong> — delivers push notifications (including the buyer's name/city/state) to your registered phone(s).</li>
   <li><strong>IndiaMART (seller.indiamart.com)</strong> — the source of lead data and the destination of lead-purchase requests, made using your own authenticated session.</li>
-  <li><strong>Google Sheets API (sheets.googleapis.com)</strong> — only if you enable Sheets export; used to write purchased-lead rows into the spreadsheet tab you specified, as described in Section 2a.</li>
 </ul>
 <p>We do not sell, rent, or transfer this data to any other third party, and we do not use it to determine creditworthiness or for lending purposes.</p>
 

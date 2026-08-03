@@ -4,7 +4,6 @@ import { buildExpoMessage } from '@shared/pushPayload';
 import { rejectionReason } from '@shared/leadPolicy';
 import { sanitizeEmail } from '@shared/email';
 import { getEntitlement } from '@shared/entitlement';
-import { SHEET_HEADER_ROW, buildSheetRow, parseSpreadsheetId } from '@shared/sheetsPayload';
 
 function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -174,104 +173,6 @@ async function pruneDeadTokens(dbUrl, accountKey, idToken, deadTokens) {
   }
 }
 
-const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
-
-// Resolves the cached OAuth token for the Sheets scope, or null if the user
-// hasn't connected Google Sheets yet (or the grant was revoked). Never
-// prompts — the interactive grant only happens from the panel's "Connect
-// Google Sheets" button.
-function getSheetsAccessToken() {
-  return new Promise((resolve) => {
-    chrome.identity.getAuthToken({ interactive: false }, (token) => {
-      if (chrome.runtime.lastError || !token) {
-        console.warn('[Sheets] No cached token — not connected:', chrome.runtime.lastError?.message);
-        resolve(null);
-        return;
-      }
-      resolve(token);
-    });
-  });
-}
-
-// Makes sure the named tab exists (creating it if not) and that its header
-// row is populated (writing it once if the tab is empty), so a first-time
-// user doesn't have to set anything up in the spreadsheet by hand.
-async function ensureTabAndHeader(token, spreadsheetId, tabName) {
-  const authHeaders = { Authorization: `Bearer ${token}` };
-
-  const metaRes = await fetch(
-    `${SHEETS_API_BASE}/${spreadsheetId}?fields=sheets.properties.title`,
-    { headers: authHeaders }
-  );
-  if (!metaRes.ok) throw new Error(`Sheet metadata fetch failed: ${metaRes.status}`);
-  const meta = await metaRes.json();
-  const tabExists = (meta.sheets || []).some((s) => s.properties?.title === tabName);
-
-  if (!tabExists) {
-    const createRes = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}:batchUpdate`, {
-      method: 'POST',
-      headers: { ...authHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tabName } } }] }),
-    });
-    if (!createRes.ok) throw new Error(`Tab creation failed: ${createRes.status}`);
-  }
-
-  const range = `${tabName}!A1:${String.fromCharCode(65 + SHEET_HEADER_ROW.length - 1)}1`;
-  const headerRes = await fetch(
-    `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
-    { headers: authHeaders }
-  );
-  if (!headerRes.ok) throw new Error(`Header check failed: ${headerRes.status}`);
-  const headerData = await headerRes.json();
-
-  if (!headerData.values || headerData.values.length === 0) {
-    const writeHeaderRes = await fetch(
-      `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
-      {
-        method: 'PUT',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: [SHEET_HEADER_ROW] }),
-      }
-    );
-    if (!writeHeaderRes.ok) throw new Error(`Header write failed: ${writeHeaderRes.status}`);
-  }
-}
-
-// Writes every lead bought this tick to the user's configured Google Sheet
-// tab, as one batched append. Fire-and-forget like every other external call
-// in this file (Firebase, Expo) — a failure here must never block or affect
-// the phone-notification path.
-async function writeLeadsToSheet(purchasedLeads) {
-  const { sheetUrl, sheetTabName } = await getLocal(['sheetUrl', 'sheetTabName']);
-  if (!sheetUrl || !sheetTabName) return;
-
-  const spreadsheetId = parseSpreadsheetId(sheetUrl);
-  if (!spreadsheetId) {
-    console.error('[Sheets] Could not parse spreadsheet ID from URL:', sheetUrl);
-    return;
-  }
-
-  const token = await getSheetsAccessToken();
-  if (!token) return;
-
-  try {
-    await ensureTabAndHeader(token, spreadsheetId, sheetTabName);
-
-    const range = `${sheetTabName}!A1`;
-    const appendRes = await fetch(
-      `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: purchasedLeads.map(buildSheetRow) }),
-      }
-    );
-    if (!appendRes.ok) throw new Error(`Append failed: ${appendRes.status}`);
-  } catch (e) {
-    console.error('[Sheets] Failed to write leads:', e);
-  }
-}
-
 // One-shot "real lead" test: run the real fetch (no filtering, no purchase),
 // take the first lead, and deliver a notification with its real details but a
 // placeholder buyer (name "Test Buyer", phone 9000000000). Reuses
@@ -315,7 +216,6 @@ async function runRealLeadTest(tabId) {
   const first = injected.mappedData[0];
   if (!first) return { ok: false, reason: 'no-lead' };
 
-  const now = new Date();
   const record = {
     ETO_OFR_ID: first.ETO_OFR_ID,
     ETO_OFR_TITLE: first.ETO_OFR_TITLE,
@@ -325,11 +225,8 @@ async function runRealLeadTest(tabId) {
     GLUSR_STATE: first.GLUSR_STATE,
     buyerName: 'Test Buyer',
     buyerMobile: '9000000000',
-    boughtDate: now.toISOString().slice(0, 10),
-    boughtTime: now.toTimeString().slice(0, 8),
   };
   await sendLeadNotifications([record]);
-  await writeLeadsToSheet([record]);
   return { ok: true };
 }
 
@@ -741,9 +638,6 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
                 null,
               buyerMobileCountry: detail?.GLUSR_USR_MOBILE_COUNTRY ?? null,
               buyerName: detail?.GLUSR_NAME ?? null,
-              // The moment the purchase actually happened, for the Sheets export row.
-              boughtDate: now.toISOString().slice(0, 10),
-              boughtTime: now.toTimeString().slice(0, 8),
             };
           });
       }
@@ -870,7 +764,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
             if (ENABLE_LEAD_BUYING && purchaseDetails.length > 0) {
               sendLeadNotifications(purchaseDetails);
-              writeLeadsToSheet(purchaseDetails);
             }
           }
         }
