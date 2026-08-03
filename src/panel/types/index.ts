@@ -14,6 +14,8 @@ export interface ExtensionSettings {
   excludeKeywords?: string[];
   phoneNumber?: string;
   testMode?: boolean;
+  maxLeadsPerDayEnabled?: boolean;
+  maxLeadsPerDay?: string;
 }
 
 export interface TimerState {
@@ -60,4 +62,5 @@ export interface StartTimerPayload {
   filters: LeadFilters;
   phoneNumber: string;
   testMode: boolean;
+  maxLeadsPerDay: number | null;
 }

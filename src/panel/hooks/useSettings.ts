@@ -13,6 +13,14 @@ export function useSettings() {
   const [minQuantity, setMinQuantity] = useState('');
   const [minTimePassed, setMinTimePassed] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  // Opt-in: the cap only applies while `maxLeadsPerDayEnabled` is on. Off by
+  // default so existing installs keep unlimited buying until the user
+  // explicitly turns it on. The number itself is preserved when toggled off,
+  // so re-enabling restores the previous value.
+  const [maxLeadsPerDayEnabled, setMaxLeadsPerDayEnabled] = useState(false);
+  // Blank means unlimited. Once set, callers clamp it to >= 1 (see
+  // TimerControls' stepper and buildStartPayload below).
+  const [maxLeadsPerDay, setMaxLeadsPerDay] = useState('');
   // Default OFF for purchasing: `testMode` true means notify-only (no buying).
   // Buying is an explicit opt-in the user must enable each install.
   const [testMode, setTestMode] = useState(true);
@@ -36,6 +44,8 @@ export function useSettings() {
       if (saved.excludeKeywords !== undefined) setExcludeKeywords(saved.excludeKeywords);
       if (saved.phoneNumber !== undefined) setPhoneNumber(saved.phoneNumber);
       if (saved.testMode !== undefined) setTestMode(saved.testMode);
+      if (saved.maxLeadsPerDayEnabled !== undefined) setMaxLeadsPerDayEnabled(saved.maxLeadsPerDayEnabled);
+      if (saved.maxLeadsPerDay !== undefined) setMaxLeadsPerDay(saved.maxLeadsPerDay);
     } catch {
       // ignore malformed settings
     }
@@ -55,9 +65,11 @@ export function useSettings() {
       excludeKeywords,
       phoneNumber,
       testMode,
+      maxLeadsPerDayEnabled,
+      maxLeadsPerDay,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode]);
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode, maxLeadsPerDayEnabled, maxLeadsPerDay]);
 
   // Mirror the start payload into chrome.storage.local so the service worker
   // (no localStorage access) has an up-to-date copy to use for auto-start,
@@ -65,7 +77,7 @@ export function useSettings() {
   useEffect(() => {
     if (!loadedRef.current) return;
     chrome.storage.local.set({ autoStartPayload: buildStartPayload() });
-  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode]);
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode, maxLeadsPerDayEnabled, maxLeadsPerDay]);
 
   const toggleStateSelection = (state: string) => {
     setSelectedStates((current) =>
@@ -99,7 +111,12 @@ export function useSettings() {
       includeKeywords: includeKeywords.length ? includeKeywords : null,
       excludeKeywords: excludeKeywords.length ? excludeKeywords : null,
     };
-    return { seconds, filters, phoneNumber, testMode };
+    // Only apply the cap when the user has opted in; the number itself stays
+    // clamped to >= 1 so a stray "0" never silently blocks all purchases.
+    const maxLeadsPerDayValue = maxLeadsPerDayEnabled && maxLeadsPerDay.trim()
+      ? Math.max(1, parseInt(maxLeadsPerDay, 10))
+      : null;
+    return { seconds, filters, phoneNumber, testMode, maxLeadsPerDay: maxLeadsPerDayValue };
   };
 
   return {
@@ -109,6 +126,8 @@ export function useSettings() {
     minTimePassed, setMinTimePassed,
     phoneNumber, setPhoneNumber,
     testMode, setTestMode,
+    maxLeadsPerDayEnabled, setMaxLeadsPerDayEnabled,
+    maxLeadsPerDay, setMaxLeadsPerDay,
     selectedStates, setSelectedStates, toggleStateSelection,
     selectedCities, setSelectedCities, toggleCitySelection,
     includeKeywords, setIncludeKeywords,

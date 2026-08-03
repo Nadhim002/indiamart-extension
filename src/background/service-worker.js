@@ -10,6 +10,10 @@ function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
 }
 
+function setLocal(values) {
+  return new Promise((resolve) => chrome.storage.local.set(values, resolve));
+}
+
 function getSession(keys) {
   return new Promise((resolve) => chrome.storage.session.get(keys, resolve));
 }
@@ -412,13 +416,14 @@ let cycleCount = 0;
 let activeFilters = null;
 let activePhoneNumber = null;
 let activeTestMode = false;
+let activeMaxLeadsPerDay = null;
 
 const ENABLE_LEAD_BUYING = true;
 
 // Shared by the manual START_TIMER message handler and the auto-start trigger
 // below — both just need to set the same run-state globals and schedule the
 // first alarm.
-function beginTimer({ tabId, url, seconds, filters, phoneNumber, testMode }) {
+function beginTimer({ tabId, url, seconds, filters, phoneNumber, testMode, maxLeadsPerDay }) {
   activeTabId = tabId;
   activeTabUrl = url || null;
   timerSeconds = seconds || 0;
@@ -427,9 +432,31 @@ function beginTimer({ tabId, url, seconds, filters, phoneNumber, testMode }) {
   activeFilters = filters || null;
   activePhoneNumber = phoneNumber || null;
   activeTestMode = testMode === true;
+  activeMaxLeadsPerDay = maxLeadsPerDay || null;
   nextFireTime = Date.now() + timerSeconds * 1000;
   scheduleAlarm();
   return { ok: true, nextFireTime, cycleCount };
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// Persisted (not module-scope) so the count survives service-worker restarts,
+// which Chrome does frequently. Keyed by date so it self-resets at midnight
+// with no alarm of its own.
+async function getTodayLeadCount() {
+  const { leadsBoughtToday } = await getLocal(['leadsBoughtToday']);
+  if (!leadsBoughtToday || leadsBoughtToday.date !== todayIso()) return 0;
+  return leadsBoughtToday.count || 0;
+}
+
+async function incrementTodayLeadCount(by) {
+  if (!by) return;
+  const { leadsBoughtToday } = await getLocal(['leadsBoughtToday']);
+  const today = todayIso();
+  const current = leadsBoughtToday && leadsBoughtToday.date === today ? leadsBoughtToday.count || 0 : 0;
+  await setLocal({ leadsBoughtToday: { date: today, count: current + by } });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -466,6 +493,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         filters: message.filters,
         phoneNumber: message.phoneNumber,
         testMode: message.testMode,
+        maxLeadsPerDay: message.maxLeadsPerDay,
       });
       sendResponse(result);
     });
@@ -505,11 +533,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Injected into the IndiaMART tab's MAIN world (so it inherits the seller's
 // session). Fetches buy-leads, maps + filters them, and — only when
-// `enableLeadBuying` — purchases each matching lead. Returns { mappedData,
-// filteredIds, purchaseDetails } to the worker. Self-contained: it may only use
-// its args and page globals (window.__im_utils, fetchGlidScriptJSFile), never
-// module-scope vars. Shared by the alarm tick and the TEST_REAL_LEAD handler.
-async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying) {
+// `enableLeadBuying` — purchases up to `remainingSlots` of the matching leads
+// (Infinity when no daily cap is set). Returns { mappedData, filteredIds,
+// purchasedIds, purchaseDetails } to the worker — filteredIds is everything
+// that matched, purchasedIds is the subset actually bought, so the worker can
+// tell "matched but capped" apart from "purchased". Self-contained: it may
+// only use its args and page globals (window.__im_utils,
+// fetchGlidScriptJSFile), never module-scope vars. Shared by the alarm tick
+// and the TEST_REAL_LEAD handler.
+async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remainingSlots) {
   try {
     if (typeof fetchGlidScriptJSFile === 'function') {
 
@@ -609,13 +641,20 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying) {
 
       console.log(`[Purchase] Lead buying is ${enableLeadBuying ? 'enabled' : 'disabled'}`);
 
+      // Cap the leads actually bought this cycle to whatever's left of the
+      // daily quota (Infinity = no cap). filteredLeads stays untouched so the
+      // worker still knows which leads matched, even the ones skipped here.
+      const slots = Number.isFinite(remainingSlots) ? remainingSlots : Infinity;
+      const leadsToBuy = enableLeadBuying ? filteredLeads.slice(0, Math.max(0, slots)) : [];
+      console.log(`[Purchase] Buying ${leadsToBuy.length} / ${filteredLeads.length} matched leads (remaining daily slots: ${slots})`);
+
       let purchaseDetails = [];
-      if (enableLeadBuying) {
+      if (enableLeadBuying && leadsToBuy.length > 0) {
         const now = new Date();
         const ptime = `${String(now.getDate()).padStart(2,'0')}-${String(now.getMonth()+1).padStart(2,'0')}-${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
 
         const purchaseResults = await Promise.allSettled(
-          filteredLeads.map((lead, index) =>
+          leadsToBuy.map((lead, index) =>
             fetch(
               'https://seller.indiamart.com/blreact/contactBuyNow',
               {
@@ -672,8 +711,8 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying) {
             console.log(`[Purchase] ${outcome.value.lead.ETO_OFR_ID} - ${outcome.value.lead.ETO_OFR_TITLE}`, outcome.value.data);
             return outcome.value;
           } else {
-            console.error(`[Purchase] Failed for ${filteredLeads[i].ETO_OFR_ID}:`, outcome.reason);
-            return { lead: filteredLeads[i], data: null, error: outcome.reason?.message };
+            console.error(`[Purchase] Failed for ${leadsToBuy[i].ETO_OFR_ID}:`, outcome.reason);
+            return { lead: leadsToBuy[i], data: null, error: outcome.reason?.message };
           }
         });
 
@@ -717,6 +756,7 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying) {
       return {
         mappedData,
         filteredIds: filteredLeads.map((l) => l.ETO_OFR_ID),
+        purchasedIds: leadsToBuy.map((l) => l.ETO_OFR_ID),
         purchaseDetails,
       };
     } else {
@@ -770,10 +810,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         );
       }
 
+      const buyingActive = ENABLE_LEAD_BUYING && !activeTestMode;
+      const remainingSlotsPromise = (buyingActive && activeMaxLeadsPerDay)
+        ? getTodayLeadCount().then((count) => Math.max(0, activeMaxLeadsPerDay - count))
+        : Promise.resolve(Infinity);
+
+      remainingSlotsPromise.then((remainingSlots) => {
       chrome.scripting.executeScript({
         target: { tabId: activeTabId },
         world: 'MAIN',
-        args: [activeFilters, activePhoneNumber, ENABLE_LEAD_BUYING && !activeTestMode],
+        args: [activeFilters, activePhoneNumber, buyingActive, remainingSlots],
         func: injectedFetchAndBuy
       }, (results) => {
         if (chrome.runtime.lastError) {
@@ -784,23 +830,29 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         }
 
         if (results && results[0] && !results[0].error && results[0].result) {
-          const { mappedData, filteredIds, purchaseDetails = [] } = results[0].result;
+          const { mappedData, filteredIds, purchasedIds = [], purchaseDetails = [] } = results[0].result;
           if (mappedData && filteredIds) {
             harvestCities(mappedData).catch((err) => console.error('[Cities] harvest failed:', err));
             const filteredSet = new Set(filteredIds);
+            const purchasedSet = new Set(purchasedIds);
             const now = new Date();
             const firstSeenDate = now.toISOString().slice(0, 10);
             const firstSeenTime = now.toTimeString().slice(0, 8);
             const filtersSnapshot = activeFilters ? { ...activeFilters } : null;
 
             mappedData.forEach((lead) => {
-              const isPurchased = filteredSet.has(lead.ETO_OFR_ID);
-              const matchedReason = activeTestMode
-                ? 'Matched (test mode)'
-                : (ENABLE_LEAD_BUYING ? 'Purchased' : 'Passed filters (buying disabled)');
-              const reasons = isPurchased
-                ? matchedReason
-                : rejectionReason(lead, activeFilters);
+              const isMatched = filteredSet.has(lead.ETO_OFR_ID);
+              const isPurchased = purchasedSet.has(lead.ETO_OFR_ID);
+              let reasons;
+              if (isPurchased) {
+                reasons = 'Purchased';
+              } else if (isMatched) {
+                reasons = buyingActive
+                  ? 'Matched (daily cap reached)'
+                  : (activeTestMode ? 'Matched (test mode)' : 'Passed filters (buying disabled)');
+              } else {
+                reasons = rejectionReason(lead, activeFilters);
+              }
 
               upsertLead({
                 ...lead,
@@ -810,6 +862,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 filtersAtFirstSeen: filtersSnapshot
               }).catch((err) => console.error('[DB] upsertLead failed:', err));
             });
+
+            if (purchasedIds.length > 0) {
+              incrementTodayLeadCount(purchasedIds.length).catch((err) => console.error('[DailyCap] increment failed:', err));
+            }
 
             if (ENABLE_LEAD_BUYING && purchaseDetails.length > 0) {
               sendLeadNotifications(purchaseDetails);
@@ -823,6 +879,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
           nextFireTime = Date.now() + timerSeconds * 1000;
           scheduleAlarm();
         }
+      });
       });
     });
   });
@@ -873,6 +930,7 @@ async function maybeAutoStartFromTab(tabId, url) {
     filters: autoStartPayload.filters,
     phoneNumber: autoStartPayload.phoneNumber,
     testMode: autoStartPayload.testMode,
+    maxLeadsPerDay: autoStartPayload.maxLeadsPerDay,
   });
 }
 

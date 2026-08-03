@@ -12,6 +12,7 @@ import type { LeadRecord } from "@/types";
 import type { Entitlement } from "@shared/types";
 import { useSettings } from "@/hooks/useSettings";
 import { useAutoStartSetting } from "@/hooks/useAutoStartSetting";
+import { useLeadsToday } from "@/hooks/useLeadsToday";
 import { useTimer } from "@/hooks/useTimer";
 import { useAccountDevices } from "@/hooks/useAccountDevices";
 import { useKnownCities } from "@/hooks/useKnownCities";
@@ -68,6 +69,7 @@ export default function DashboardPage({
 }: DashboardPageProps) {
   const settings = useSettings();
   const autoStart = useAutoStartSetting();
+  const { leadsBoughtToday } = useLeadsToday();
   const timer = useTimer();
   const devices = useAccountDevices(googleUser, entitlement);
   const cityOptions = useKnownCities();
@@ -136,6 +138,11 @@ export default function DashboardPage({
         setTestMode={settings.setTestMode}
         autoStartEnabled={autoStart.autoStartEnabled}
         setAutoStartEnabled={autoStart.setAutoStartEnabled}
+        maxLeadsPerDayEnabled={settings.maxLeadsPerDayEnabled}
+        setMaxLeadsPerDayEnabled={settings.setMaxLeadsPerDayEnabled}
+        maxLeadsPerDay={settings.maxLeadsPerDay}
+        setMaxLeadsPerDay={settings.setMaxLeadsPerDay}
+        leadsBoughtToday={leadsBoughtToday}
         isRunning={timer.isRunning}
         onStart={handleStart}
         onStop={timer.stop}
