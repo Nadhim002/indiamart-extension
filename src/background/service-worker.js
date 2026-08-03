@@ -20,6 +20,9 @@ function setSession(values) {
 
 const INDIAMART_ORIGIN = 'https://seller.indiamart.com';
 
+// How often (in timer cycles) the alarm handler re-validates entitlement.
+const ENTITLEMENT_CHECK_INTERVAL = 5000;
+
 function isIndiamartUrl(url) {
   if (!url) return false;
   try {
@@ -733,16 +736,19 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying) {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== 'timer-alarm' || !timerRunning || !activeTabId) return;
 
-  // Re-validate entitlement each cycle; stop automation if it flips invalid
-  // (e.g. subscription expired or the device seat was removed).
-  checkRunAllowed().then((verdict) => {
-    if (!verdict.ok) {
-      console.warn('[Entitlement] stopping timer:', verdict.reason);
-      timerRunning = false;
-      nextFireTime = null;
-      chrome.alarms.clear('timer-alarm');
-    }
-  });
+  // Re-validate entitlement every ENTITLEMENT_CHECK_INTERVAL cycles (and on the
+  // very first cycle); stop automation if it flips invalid (e.g. subscription
+  // expired or the device seat was removed).
+  if (cycleCount % ENTITLEMENT_CHECK_INTERVAL === 0) {
+    checkRunAllowed().then((verdict) => {
+      if (!verdict.ok) {
+        console.warn('[Entitlement] stopping timer:', verdict.reason);
+        timerRunning = false;
+        nextFireTime = null;
+        chrome.alarms.clear('timer-alarm');
+      }
+    });
+  }
 
   chrome.tabs.get(activeTabId, (tab) => {
     if (chrome.runtime.lastError || !tab) {
