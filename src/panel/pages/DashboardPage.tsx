@@ -5,6 +5,7 @@ import TimerControls from "@/components/TimerControls";
 import LeadFilters from "@/components/LeadFilters";
 import StatusFooter from "@/components/StatusFooter";
 import MyDevices from "@/components/MyDevices";
+import GoogleSheetsExport from "@/components/GoogleSheetsExport";
 import PageShell from "@/components/PageShell";
 import DeviceLimitPage from "@/pages/DeviceLimitPage";
 import type { LeadRecord } from "@/types";
@@ -174,6 +175,8 @@ export default function DashboardPage({
         activeUrl={timer.activeUrl}
         nextFireTime={timer.nextFireTime}
       />
+
+      <GoogleSheetsExport />
 
       <MyDevices
         computers={devices.computers}
