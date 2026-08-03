@@ -92,6 +92,7 @@ async function sendLeadNotifications(purchasedLeads) {
       buyerName: lead.buyerName ?? null,
       buyerMobile: lead.buyerMobile ?? null,
       quantity: lead.quantity != null ? String(lead.quantity) : null,
+      price: lead.ETO_OFR_APPROX_ORDER_VALUE ?? null,
       city: lead.GLUSR_CITY ?? null,
       state: lead.GLUSR_STATE ?? null,
       timestamp: Date.now(),
