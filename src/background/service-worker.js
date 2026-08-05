@@ -812,9 +812,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       }
 
       const buyingActive = ENABLE_LEAD_BUYING && !activeTestMode;
+      // `null` (not `Infinity`) when uncapped — executeScript args must be
+      // JSON-serializable, and Infinity isn't. injectedFetchAndBuy already
+      // treats any non-finite value as "no cap".
       const remainingSlotsPromise = (buyingActive && activeMaxLeadsPerDay)
         ? getTodayLeadCount().then((count) => Math.max(0, activeMaxLeadsPerDay - count))
-        : Promise.resolve(Infinity);
+        : Promise.resolve(null);
 
       remainingSlotsPromise.then((remainingSlots) => {
       chrome.scripting.executeScript({
