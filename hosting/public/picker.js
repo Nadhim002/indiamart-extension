@@ -1,29 +1,22 @@
-// Runs inside the manifest's `sandbox` page (picker-sandbox.html), which gets
-// a relaxed CSP that can load Google's remotely-hosted Picker script — the
-// extension's normal `script-src 'self'` CSP blocks that everywhere else.
-// Sandboxed pages have no chrome.* access, so this talks to the panel purely
+// Hosted on Firebase Hosting (a real https:// origin) because Google's Picker
+// library computes its own origin manually and requires a real, non-opaque
+// origin to validate cross-frame messages — it cannot run inside a Chrome
+// extension's manifest-sandboxed page, which is always opaque ('null') by
+// design. The extension opens this page in a popup and talks to it purely
 // via window.opener postMessage (see useGoogleSheetsSettings.ts pickSheet()).
 
-declare const gapi: any;
-declare const google: any;
+const statusEl = document.getElementById('status');
+const openerWindow = window.opener;
 
-type InitMessage = { type: 'PICKER_INIT'; token: string; developerKey: string };
-type ResultMessage =
-  | { type: 'PICKER_RESULT'; ok: true; spreadsheetId: string; spreadsheetName: string }
-  | { type: 'PICKER_RESULT'; ok: false; reason: string };
-
-const statusEl = document.getElementById('status')!;
-const openerWindow = window.opener as Window | null;
-
-function setStatus(text: string) {
+function setStatus(text) {
   statusEl.textContent = text;
 }
 
-function postResult(msg: ResultMessage) {
-  openerWindow?.postMessage(msg, '*');
+function postResult(msg) {
+  openerWindow.postMessage(msg, '*');
 }
 
-function loadGapiScript(): Promise<void> {
+function loadGapiScript() {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = 'https://apis.google.com/js/api.js';
@@ -33,7 +26,7 @@ function loadGapiScript(): Promise<void> {
   });
 }
 
-async function createNewSpreadsheet(token: string): Promise<{ id: string; name: string }> {
+async function createNewSpreadsheet(token) {
   const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -44,7 +37,7 @@ async function createNewSpreadsheet(token: string): Promise<{ id: string; name: 
   return { id: data.spreadsheetId, name: data.properties?.title ?? 'Untitled spreadsheet' };
 }
 
-function openPicker(token: string, developerKey: string) {
+function openPicker(token, developerKey) {
   const view = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS).setMode(
     google.picker.DocsViewMode.LIST
   );
@@ -53,7 +46,7 @@ function openPicker(token: string, developerKey: string) {
     .setOAuthToken(token)
     .setDeveloperKey(developerKey)
     .addView(view)
-    .setCallback((data: any) => {
+    .setCallback((data) => {
       if (data.action === google.picker.Action.PICKED) {
         const doc = data.docs[0];
         postResult({ type: 'PICKER_RESULT', ok: true, spreadsheetId: doc.id, spreadsheetName: doc.name });
@@ -85,7 +78,7 @@ function openPicker(token: string, developerKey: string) {
   picker.setVisible(true);
 }
 
-async function init(token: string, developerKey: string) {
+async function init(token, developerKey) {
   try {
     setStatus('Loading picker…');
     await loadGapiScript();
@@ -96,16 +89,20 @@ async function init(token: string, developerKey: string) {
   }
 }
 
-window.addEventListener('message', (event: MessageEvent) => {
+window.addEventListener('message', (event) => {
+  // event.source is a live reference to the sender window, not spoofable —
+  // this proves the message came from whoever opened this popup via
+  // window.open(). The origin check is defense in depth on top of that.
   if (event.source !== openerWindow) return;
-  const data = event.data as InitMessage;
-  if (data?.type === 'PICKER_INIT') {
+  if (typeof event.origin !== 'string' || !event.origin.startsWith('chrome-extension://')) return;
+  const data = event.data;
+  if (data && data.type === 'PICKER_INIT') {
     init(data.token, data.developerKey);
   }
 });
 
 if (!openerWindow) {
-  setStatus('This page must be opened from the extension panel.');
+  setStatus('This page must be opened from the Indiamart Lead Notifier extension.');
 } else {
   openerWindow.postMessage({ type: 'PICKER_SANDBOX_READY' }, '*');
 }

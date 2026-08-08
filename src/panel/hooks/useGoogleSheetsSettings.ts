@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { FIREBASE_CONFIG } from '@shared/firebaseConfig';
 
+// Hosted on Firebase Hosting rather than shipped as a manifest sandboxed
+// page — Google's Picker library needs a real, non-opaque origin to
+// validate its own cross-frame messages, which a sandboxed extension page
+// (always opaque by design) can never provide.
+const PICKER_ORIGIN = 'https://indiamart-extension-notifier.firebaseapp.com';
+const PICKER_URL = `${PICKER_ORIGIN}/picker.html`;
+
 // Google Sheets export settings live in chrome.storage.local — not the
 // localStorage-backed useSettings seam — since they're cross-context
 // connection config the service worker reads directly (like
@@ -52,10 +59,9 @@ export function useGoogleSheetsSettings() {
   }, [sheetTabName]);
 
   // Gets an interactive OAuth token (drive.file scope, per manifest), opens
-  // the Picker in a popup (needs its own window — the sandboxed page can't
-  // load Google's remote picker script under the panel's normal CSP, and
-  // Picker's UI needs more room than the side panel gives it), and resolves
-  // once the user picks a file, creates one, or closes the popup.
+  // the hosted Picker page in a popup (needs its own window since Picker's
+  // UI needs more room than the side panel gives it), and resolves once the
+  // user picks a file, creates one, or closes the popup.
   const pickSheet = (): Promise<{ ok: boolean; reason?: string }> => {
     return new Promise((resolve) => {
       chrome.identity.getAuthToken({ interactive: true }, (token) => {
@@ -64,11 +70,7 @@ export function useGoogleSheetsSettings() {
           return;
         }
 
-        const pickerWindow = window.open(
-          chrome.runtime.getURL('picker-sandbox.html'),
-          '_blank',
-          'width=1051,height=650'
-        );
+        const pickerWindow = window.open(PICKER_URL, '_blank', 'width=1051,height=650');
         if (!pickerWindow) {
           resolve({ ok: false, reason: 'Popup blocked — allow popups for this extension' });
           return;
@@ -84,12 +86,12 @@ export function useGoogleSheetsSettings() {
         };
 
         const onMessage = (event: MessageEvent) => {
-          if (event.source !== pickerWindow) return;
+          if (event.source !== pickerWindow || event.origin !== PICKER_ORIGIN) return;
           const data = event.data;
           if (data?.type === 'PICKER_SANDBOX_READY') {
             pickerWindow.postMessage(
               { type: 'PICKER_INIT', token, developerKey: FIREBASE_CONFIG.apiKey },
-              '*'
+              PICKER_ORIGIN
             );
           } else if (data?.type === 'PICKER_RESULT') {
             if (data.ok) {
