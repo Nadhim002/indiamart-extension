@@ -4,7 +4,7 @@ import { buildExpoMessage } from '@shared/pushPayload';
 import { rejectionReason } from '@shared/leadPolicy';
 import { sanitizeEmail } from '@shared/email';
 import { getEntitlement } from '@shared/entitlement';
-import { SHEET_HEADER_ROW, buildSheetRow, parseSpreadsheetId } from '@shared/sheetsPayload';
+import { SHEET_HEADER_ROW, buildSheetRow } from '@shared/sheetsPayload';
 
 function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -176,10 +176,9 @@ async function pruneDeadTokens(dbUrl, accountKey, idToken, deadTokens) {
 
 const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
 
-// Resolves the cached OAuth token for the Sheets scope, or null if the user
-// hasn't connected Google Sheets yet (or the grant was revoked). Never
-// prompts — the interactive grant only happens from the panel's "Connect
-// Google Sheets" button.
+// Resolves the cached OAuth token for the drive.file scope, or null if the
+// user hasn't picked a sheet yet (or the grant was revoked). Never prompts —
+// the interactive grant only happens from the panel's "Choose sheet" button.
 function getSheetsAccessToken() {
   return new Promise((resolve) => {
     chrome.identity.getAuthToken({ interactive: false }, (token) => {
@@ -242,14 +241,8 @@ async function ensureTabAndHeader(token, spreadsheetId, tabName) {
 // in this file (Firebase, Expo) — a failure here must never block or affect
 // the phone-notification path.
 async function writeLeadsToSheet(purchasedLeads) {
-  const { sheetUrl, sheetTabName } = await getLocal(['sheetUrl', 'sheetTabName']);
-  if (!sheetUrl || !sheetTabName) return;
-
-  const spreadsheetId = parseSpreadsheetId(sheetUrl);
-  if (!spreadsheetId) {
-    console.error('[Sheets] Could not parse spreadsheet ID from URL:', sheetUrl);
-    return;
-  }
+  const { spreadsheetId, sheetTabName } = await getLocal(['spreadsheetId', 'sheetTabName']);
+  if (!spreadsheetId || !sheetTabName) return;
 
   const token = await getSheetsAccessToken();
   if (!token) return;

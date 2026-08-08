@@ -40,10 +40,3 @@ export function buildSheetRow(lead: PurchasedLead): (string | number)[] {
     lead.GLUSR_STATE ?? '',
   ];
 }
-
-// Extracts the spreadsheet ID out of a normal Google Sheets URL, e.g.
-// https://docs.google.com/spreadsheets/d/<ID>/edit#gid=0 → <ID>.
-export function parseSpreadsheetId(url: string): string | null {
-  const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  return match ? match[1] : null;
-}

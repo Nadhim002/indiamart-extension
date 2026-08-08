@@ -1,21 +1,26 @@
 import { useState, useEffect, useRef } from 'react';
+import { FIREBASE_CONFIG } from '@shared/firebaseConfig';
 
-// Google Sheets export settings (sheetUrl, sheetTabName) live in
-// chrome.storage.local — not the localStorage-backed useSettings seam —
-// since they're cross-context connection config the service worker reads
-// directly (like registeredDevices/googleUID), not a per-run filter.
+// Google Sheets export settings live in chrome.storage.local — not the
+// localStorage-backed useSettings seam — since they're cross-context
+// connection config the service worker reads directly (like
+// registeredDevices/googleUID), not a per-run filter.
+//
+// spreadsheetId/spreadsheetName are set only via pickSheet() (Google Picker,
+// drive.file scope) — the user never types a URL/ID by hand, so there's no
+// parsing step and no way for the two to disagree.
 export function useGoogleSheetsSettings() {
-  const [sheetUrl, setSheetUrl] = useState('');
+  const [spreadsheetId, setSpreadsheetId] = useState('');
+  const [spreadsheetName, setSpreadsheetName] = useState('');
   const [sheetTabName, setSheetTabName] = useState('');
-  const [connected, setConnected] = useState(false);
 
   const loadedRef = useRef(false);
 
   useEffect(() => {
-    chrome.storage.local.get(['sheetUrl', 'sheetTabName', 'sheetsConnected'], (r) => {
-      if (typeof r.sheetUrl === 'string') setSheetUrl(r.sheetUrl);
+    chrome.storage.local.get(['spreadsheetId', 'spreadsheetName', 'sheetTabName'], (r) => {
+      if (typeof r.spreadsheetId === 'string') setSpreadsheetId(r.spreadsheetId);
+      if (typeof r.spreadsheetName === 'string') setSpreadsheetName(r.spreadsheetName);
       if (typeof r.sheetTabName === 'string') setSheetTabName(r.sheetTabName);
-      if (r.sheetsConnected === true) setConnected(true);
       loadedRef.current = true;
     });
 
@@ -24,15 +29,18 @@ export function useGoogleSheetsSettings() {
       area: string
     ) => {
       if (area !== 'local') return;
-      if (changes.sheetUrl) {
-        const next = changes.sheetUrl.newValue;
-        setSheetUrl(typeof next === 'string' ? next : '');
+      if (changes.spreadsheetId) {
+        const next = changes.spreadsheetId.newValue;
+        setSpreadsheetId(typeof next === 'string' ? next : '');
+      }
+      if (changes.spreadsheetName) {
+        const next = changes.spreadsheetName.newValue;
+        setSpreadsheetName(typeof next === 'string' ? next : '');
       }
       if (changes.sheetTabName) {
         const next = changes.sheetTabName.newValue;
         setSheetTabName(typeof next === 'string' ? next : '');
       }
-      if (changes.sheetsConnected) setConnected(changes.sheetsConnected.newValue === true);
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
@@ -40,22 +48,87 @@ export function useGoogleSheetsSettings() {
 
   useEffect(() => {
     if (!loadedRef.current) return;
-    chrome.storage.local.set({ sheetUrl, sheetTabName });
-  }, [sheetUrl, sheetTabName]);
+    chrome.storage.local.set({ sheetTabName });
+  }, [sheetTabName]);
 
-  const connect = (): Promise<{ ok: boolean; reason?: string }> => {
+  // Gets an interactive OAuth token (drive.file scope, per manifest), opens
+  // the Picker in a popup (needs its own window — the sandboxed page can't
+  // load Google's remote picker script under the panel's normal CSP, and
+  // Picker's UI needs more room than the side panel gives it), and resolves
+  // once the user picks a file, creates one, or closes the popup.
+  const pickSheet = (): Promise<{ ok: boolean; reason?: string }> => {
     return new Promise((resolve) => {
       chrome.identity.getAuthToken({ interactive: true }, (token) => {
         if (chrome.runtime.lastError || !token) {
           resolve({ ok: false, reason: chrome.runtime.lastError?.message ?? 'No token granted' });
           return;
         }
-        chrome.storage.local.set({ sheetsConnected: true });
-        setConnected(true);
-        resolve({ ok: true });
+
+        const pickerWindow = window.open(
+          chrome.runtime.getURL('picker-sandbox.html'),
+          '_blank',
+          'width=1051,height=650'
+        );
+        if (!pickerWindow) {
+          resolve({ ok: false, reason: 'Popup blocked — allow popups for this extension' });
+          return;
+        }
+
+        let settled = false;
+        const finish = (result: { ok: boolean; reason?: string }) => {
+          if (settled) return;
+          settled = true;
+          window.removeEventListener('message', onMessage);
+          window.clearInterval(closedPoll);
+          resolve(result);
+        };
+
+        const onMessage = (event: MessageEvent) => {
+          if (event.source !== pickerWindow) return;
+          const data = event.data;
+          if (data?.type === 'PICKER_SANDBOX_READY') {
+            pickerWindow.postMessage(
+              { type: 'PICKER_INIT', token, developerKey: FIREBASE_CONFIG.apiKey },
+              '*'
+            );
+          } else if (data?.type === 'PICKER_RESULT') {
+            if (data.ok) {
+              chrome.storage.local.set({
+                spreadsheetId: data.spreadsheetId,
+                spreadsheetName: data.spreadsheetName,
+              });
+              setSpreadsheetId(data.spreadsheetId);
+              setSpreadsheetName(data.spreadsheetName);
+              finish({ ok: true });
+            } else {
+              finish({ ok: false, reason: data.reason });
+            }
+          }
+        };
+        window.addEventListener('message', onMessage);
+
+        // Covers the user closing the popup without picking anything —
+        // otherwise the panel's "busy" state would hang forever.
+        const closedPoll = window.setInterval(() => {
+          if (pickerWindow.closed) finish({ ok: false, reason: 'cancelled' });
+        }, 500);
       });
     });
   };
 
-  return { sheetUrl, setSheetUrl, sheetTabName, setSheetTabName, connected, connect };
+  const clearSheet = () => {
+    chrome.storage.local.remove(['spreadsheetId', 'spreadsheetName']);
+    setSpreadsheetId('');
+    setSpreadsheetName('');
+  };
+
+  return {
+    spreadsheetId,
+    spreadsheetName,
+    sheetTabName,
+    setSheetTabName,
+    connected: Boolean(spreadsheetId),
+    pickSheet,
+    clearSheet,
+  };
 }
