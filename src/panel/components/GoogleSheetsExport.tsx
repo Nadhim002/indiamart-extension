@@ -37,8 +37,8 @@ export default function GoogleSheetsExport() {
   };
 
   return (
-    <section className="mt-6 space-y-4">
-      <h2 className="text-sm font-medium text-foreground">Google Sheets export</h2>
+    <section className="mt-0 space-y-4">
+      <h2 className="text-sm font-medium text-foreground">Google Sheets</h2>
 
       <div className="space-y-2">
         <Label htmlFor="sheetTabName">Tab name</Label>

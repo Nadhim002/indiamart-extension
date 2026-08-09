@@ -6,7 +6,10 @@ import LeadFilters from "@/components/LeadFilters";
 import StatusFooter from "@/components/StatusFooter";
 import MyDevices from "@/components/MyDevices";
 import GoogleSheetsExport from "@/components/GoogleSheetsExport";
+import DriveSyncExport from "@/components/DriveSyncExport";
+import CsvDownload from "@/components/CsvDownload";
 import PageShell from "@/components/PageShell";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import DeviceLimitPage from "@/pages/DeviceLimitPage";
 import type { LeadRecord } from "@/types";
 import type { Entitlement } from "@shared/types";
@@ -17,6 +20,8 @@ import { useTimer } from "@/hooks/useTimer";
 import { useAccountDevices } from "@/hooks/useAccountDevices";
 import { useKnownCities } from "@/hooks/useKnownCities";
 import { leadsToCsv } from "@/lib/leadsCsv";
+import { getOrCreateInstallId } from "@/lib/installId";
+import { countActiveFilters } from "@/lib/filterCount";
 
 const STATE_OPTIONS = [
   "Andhra Pradesh",
@@ -82,13 +87,14 @@ export default function DashboardPage({
   const handleExportCSV = () => {
     chrome.runtime.sendMessage(
       { type: "GET_ALL_LEADS" },
-      (response: { leads?: LeadRecord[] } = {}) => {
+      async (response: { leads?: LeadRecord[] } = {}) => {
         const leads = response.leads;
         if (!leads || leads.length === 0) {
           alert("No leads recorded yet.");
           return;
         }
-        const csv = leadsToCsv(leads);
+        const deviceId = await getOrCreateInstallId();
+        const csv = leadsToCsv(leads, deviceId);
         const blob = new Blob([csv], { type: "text/csv" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -114,78 +120,114 @@ export default function DashboardPage({
     );
   }
 
+  const filterCount = countActiveFilters({
+    minPrice: settings.minPrice,
+    minQuantity: settings.minQuantity,
+    minTimePassed: settings.minTimePassed,
+    selectedStates: settings.selectedStates,
+    selectedCities: settings.selectedCities,
+    includeKeywords: settings.includeKeywords,
+    excludeKeywords: settings.excludeKeywords,
+  });
+
   return (
     <PageShell>
-      <PageHeader
-        email={googleUser.email}
-        deviceCount={devices.phoneCount}
-        onExportCSV={handleExportCSV}
-        onSignOut={onSignOut}
-      />
+      <Tabs defaultValue="controls" className="w-full">
+        <div className="sticky top-0 z-10 -mx-5 border-b border-border bg-background px-5 pb-3">
+          <PageHeader email={googleUser.email} deviceCount={devices.phoneCount} />
 
-      <TimerHero
-        timeLeft={timer.timeLeft}
-        isRunning={timer.isRunning}
-        formatTime={formatTime}
-      />
+          <TimerHero
+            timeLeft={timer.timeLeft}
+            isRunning={timer.isRunning}
+            formatTime={formatTime}
+          />
 
-      <TimerControls
-        inputSeconds={settings.inputSeconds}
-        setInputSeconds={settings.setInputSeconds}
-        phoneNumber={settings.phoneNumber}
-        setPhoneNumber={settings.setPhoneNumber}
-        testMode={settings.testMode}
-        setTestMode={settings.setTestMode}
-        autoStartEnabled={autoStart.autoStartEnabled}
-        setAutoStartEnabled={autoStart.setAutoStartEnabled}
-        maxLeadsPerDayEnabled={settings.maxLeadsPerDayEnabled}
-        setMaxLeadsPerDayEnabled={settings.setMaxLeadsPerDayEnabled}
-        maxLeadsPerDay={settings.maxLeadsPerDay}
-        setMaxLeadsPerDay={settings.setMaxLeadsPerDay}
-        leadsBoughtToday={leadsBoughtToday}
-        isRunning={timer.isRunning}
-        onStart={handleStart}
-        onStop={timer.stop}
-        onReset={timer.reset}
-      />
+          <TabsList>
+            <TabsTrigger value="controls">Controls</TabsTrigger>
+            <TabsTrigger value="filters">
+              <span className="flex items-center justify-center gap-1">
+                Filters
+                {filterCount > 0 && (
+                  <span className="rounded-full bg-primary/10 px-1 text-[10px] font-normal text-primary">
+                    {filterCount}
+                  </span>
+                )}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="export">Export</TabsTrigger>
+            <TabsTrigger value="devices">Devices</TabsTrigger>
+          </TabsList>
+        </div>
 
-      <LeadFilters
-        minPrice={settings.minPrice}
-        setMinPrice={settings.setMinPrice}
-        minQuantity={settings.minQuantity}
-        setMinQuantity={settings.setMinQuantity}
-        minTimePassed={settings.minTimePassed}
-        setMinTimePassed={settings.setMinTimePassed}
-        selectedStates={settings.selectedStates}
-        toggleStateSelection={settings.toggleStateSelection}
-        stateOptions={STATE_OPTIONS}
-        selectedCities={settings.selectedCities}
-        toggleCitySelection={settings.toggleCitySelection}
-        cityOptions={cityOptions}
-        includeKeywords={settings.includeKeywords}
-        setIncludeKeywords={settings.setIncludeKeywords}
-        excludeKeywords={settings.excludeKeywords}
-        setExcludeKeywords={settings.setExcludeKeywords}
-        isRunning={timer.isRunning}
-      />
+        <TabsContent value="controls" forceMount>
+          <TimerControls
+            inputSeconds={settings.inputSeconds}
+            setInputSeconds={settings.setInputSeconds}
+            phoneNumber={settings.phoneNumber}
+            setPhoneNumber={settings.setPhoneNumber}
+            testMode={settings.testMode}
+            setTestMode={settings.setTestMode}
+            autoStartEnabled={autoStart.autoStartEnabled}
+            setAutoStartEnabled={autoStart.setAutoStartEnabled}
+            maxLeadsPerDayEnabled={settings.maxLeadsPerDayEnabled}
+            setMaxLeadsPerDayEnabled={settings.setMaxLeadsPerDayEnabled}
+            maxLeadsPerDay={settings.maxLeadsPerDay}
+            setMaxLeadsPerDay={settings.setMaxLeadsPerDay}
+            leadsBoughtToday={leadsBoughtToday}
+            isRunning={timer.isRunning}
+            onStart={handleStart}
+            onStop={timer.stop}
+            onReset={timer.reset}
+          />
 
-      <StatusFooter
-        cycleCount={timer.cycleCount}
-        isRunning={timer.isRunning}
-        activeUrl={timer.activeUrl}
-        nextFireTime={timer.nextFireTime}
-      />
+          <StatusFooter
+            cycleCount={timer.cycleCount}
+            isRunning={timer.isRunning}
+            activeUrl={timer.activeUrl}
+            nextFireTime={timer.nextFireTime}
+          />
+        </TabsContent>
 
-      <GoogleSheetsExport />
+        <TabsContent value="filters" forceMount>
+          <LeadFilters
+            minPrice={settings.minPrice}
+            setMinPrice={settings.setMinPrice}
+            minQuantity={settings.minQuantity}
+            setMinQuantity={settings.setMinQuantity}
+            minTimePassed={settings.minTimePassed}
+            setMinTimePassed={settings.setMinTimePassed}
+            selectedStates={settings.selectedStates}
+            toggleStateSelection={settings.toggleStateSelection}
+            stateOptions={STATE_OPTIONS}
+            selectedCities={settings.selectedCities}
+            toggleCitySelection={settings.toggleCitySelection}
+            cityOptions={cityOptions}
+            includeKeywords={settings.includeKeywords}
+            setIncludeKeywords={settings.setIncludeKeywords}
+            excludeKeywords={settings.excludeKeywords}
+            setExcludeKeywords={settings.setExcludeKeywords}
+            isRunning={timer.isRunning}
+          />
+        </TabsContent>
 
-      <MyDevices
-        computers={devices.computers}
-        phones={devices.phones}
-        maxComputers={devices.maxComputers}
-        maxPhones={devices.maxPhones}
-        onRename={devices.renameDevice}
-        onRemove={devices.removeDevice}
-      />
+        <TabsContent value="export" forceMount>
+          <GoogleSheetsExport />
+          <DriveSyncExport />
+          <CsvDownload onExportCSV={handleExportCSV} />
+        </TabsContent>
+
+        <TabsContent value="devices" forceMount>
+          <MyDevices
+            computers={devices.computers}
+            phones={devices.phones}
+            maxComputers={devices.maxComputers}
+            maxPhones={devices.maxPhones}
+            onRename={devices.renameDevice}
+            onRemove={devices.removeDevice}
+            onSignOut={onSignOut}
+          />
+        </TabsContent>
+      </Tabs>
     </PageShell>
   );
 }

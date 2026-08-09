@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 import DeviceList from '@/components/DeviceList';
 import type { DeviceView } from '@/hooks/useAccountDevices';
 import { sendRealLeadTest, deleteDummyLeads } from '@/lib/testNotification';
@@ -11,6 +12,7 @@ interface MyDevicesProps {
   maxPhones: number;
   onRename: (kind: 'computer' | 'phone', id: string, name: string) => void;
   onRemove: (kind: 'computer' | 'phone', id: string) => void;
+  onSignOut: () => void;
 }
 
 const REASON_TEXT: Record<string, string> = {
@@ -27,6 +29,7 @@ export default function MyDevices({
   maxPhones,
   onRename,
   onRemove,
+  onSignOut,
 }: MyDevicesProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,7 +78,7 @@ export default function MyDevices({
   };
 
   return (
-    <section className="mt-6 space-y-4">
+    <section className="mt-0 space-y-4">
       <div className="space-y-2">
         <h2 className="text-sm font-medium text-foreground">
           Computers <span className="text-muted-foreground">({computers.length}/{maxComputers})</span>
@@ -108,6 +111,12 @@ export default function MyDevices({
           {status && <p className="text-xs text-muted-foreground" role="status">{status}</p>}
         </div>
       )}
+
+      <Separator />
+
+      <Button variant="outline" className="w-full" onClick={onSignOut}>
+        Sign out
+      </Button>
     </section>
   );
 }

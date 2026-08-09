@@ -5,6 +5,7 @@ import { rejectionReason } from '@shared/leadPolicy';
 import { sanitizeEmail } from '@shared/email';
 import { getEntitlement } from '@shared/entitlement';
 import { SHEET_HEADER_ROW, buildSheetRow, headerMatchesExpected } from '@shared/sheetsPayload';
+import { LEAD_HISTORY_HEADER_ROW, buildLeadHistoryRow } from '@shared/leadHistoryPayload';
 
 function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -445,16 +446,53 @@ async function runRealLeadTest(tabId) {
 
 
 const DB_NAME = 'indiamart_leads';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'leads';
+
+// firstSeenDate/firstSeenTime have always been stored as separate local-time
+// strings (see the write site below) with no timezone attached. Used only for
+// the one-time v1->v2 backfill of firstSeenAtMs on pre-existing rows — new
+// records get it directly from Date.now(), so this is a one-shot best-effort
+// reconstruction, not something new code should ever need again.
+function parseLocalDateTimeToMs(dateStr, timeStr) {
+  if (!dateStr) return null;
+  const iso = timeStr ? `${dateStr}T${timeStr}` : `${dateStr}T00:00:00`;
+  const ms = new Date(iso).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
 
 function openLeadsDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'ETO_OFR_ID' });
+      const store = db.objectStoreNames.contains(STORE_NAME)
+        ? e.target.transaction.objectStore(STORE_NAME)
+        : db.createObjectStore(STORE_NAME, { keyPath: 'ETO_OFR_ID' });
+
+      if (e.oldVersion < 2) {
+        // IndexedDB can't index `undefined`, so 0 is the "not yet synced to
+        // Drive" sentinel used throughout — see syncedAt below.
+        if (!store.indexNames.contains('syncedAt')) {
+          store.createIndex('syncedAt', 'syncedAt');
+        }
+
+        // Backfill every pre-existing row so the very first Drive sync
+        // pushes the complete history instead of starting from a blank slate.
+        const cursorReq = store.openCursor();
+        cursorReq.onsuccess = (ev) => {
+          const cursor = ev.target.result;
+          if (!cursor) return;
+          const record = cursor.value;
+          if (record.firstSeenAtMs == null) {
+            record.firstSeenAtMs = parseLocalDateTimeToMs(record.firstSeenDate, record.firstSeenTime);
+          }
+          if (record.syncedAt == null) {
+            record.syncedAt = 0;
+          }
+          cursor.update(record);
+          cursor.continue();
+        };
       }
     };
     req.onsuccess = (e) => resolve(e.target.result);
@@ -516,6 +554,306 @@ async function getAllLeads() {
     req.onsuccess = (e) => resolve(e.target.result);
     req.onerror = (e) => reject(e.target.error);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Drive sync — pushes the lead history log to a dedicated, per-user Google
+// Sheet ("IndiaMART Lead History") in the user's own Drive, so a separate
+// analytics web app can read it. Reuses the drive.file grant + Sheets API
+// already wired up for the purchased-leads sheet, but is otherwise fully
+// independent of it: separate spreadsheet, separate storage keys, separate
+// failure path. A sync failure here must never affect lead buying.
+// ---------------------------------------------------------------------------
+
+const DRIVE_SYNC_CHUNK_SIZE = 500;
+const DRIVE_SYNC_STALE_MS = 24 * 60 * 60 * 1000;
+
+let driveSyncInFlight = false;
+let driveSyncLastError = null;
+// In-memory only — re-verified against the API on the first call after every
+// worker restart. Avoids repeating the metadata-fetch-on-every-write mistake
+// the purchased-leads path makes (ensureTabAndHeader runs on every write).
+let historySpreadsheetCache = null;
+
+function getOrCreateInstallId() {
+  return getLocal(['installId']).then(({ installId }) => {
+    if (installId) return installId;
+    const id = crypto.randomUUID();
+    return setLocal({ installId: id }).then(() => id);
+  });
+}
+
+function removeCachedAuthToken(token) {
+  return new Promise((resolve) => {
+    if (!token) {
+      resolve();
+      return;
+    }
+    chrome.identity.removeCachedAuthToken({ token }, () => resolve());
+  });
+}
+
+// Throws a tagged error on 401 (carrying the token that failed, for the
+// retry-once path in syncLeadsToDrive) and a plain error on any other
+// non-OK status. There is no other self-healing path for a stale/revoked
+// cached token anywhere in this file, which is tolerable for a
+// user-initiated click but not for an unattended 24h background sync.
+function assertOk(res, context, token) {
+  if (res.status === 401) {
+    const err = new Error(`${context}: 401`);
+    err.isAuthError = true;
+    err.authToken = token;
+    throw err;
+  }
+  if (!res.ok) throw new Error(`${context}: ${res.status}`);
+}
+
+// Creates "IndiaMART Lead History" in the user's own Drive, writes the header
+// row, and applies a protected range over it as an accidental-edit deterrent
+// — NOT a guarantee: the user owns this file and can always edit it or
+// remove the protection themselves.
+async function createHistorySpreadsheet(token) {
+  const createRes = await fetch(SHEETS_API_BASE, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ properties: { title: 'IndiaMART Lead History' } }),
+  });
+  assertOk(createRes, 'History sheet create failed', token);
+  const created = await createRes.json();
+  const spreadsheetId = created.spreadsheetId;
+  const sheet = created.sheets?.[0];
+  const sheetId = sheet?.properties?.sheetId ?? 0;
+  const tabName = sheet?.properties?.title ?? 'Sheet1';
+
+  const range = `${tabName}!A1:${String.fromCharCode(65 + LEAD_HISTORY_HEADER_ROW.length - 1)}1`;
+  const writeHeaderRes = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [LEAD_HISTORY_HEADER_ROW] }),
+    }
+  );
+  assertOk(writeHeaderRes, 'History header write failed', token);
+
+  try {
+    const protectRes = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [
+          {
+            addProtectedRange: {
+              protectedRange: {
+                range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                description: 'IndiaMART Lead History header — do not edit',
+                warningOnly: true,
+              },
+            },
+          },
+        ],
+      }),
+    });
+    if (!protectRes.ok) console.warn('[DriveSync] Header protection request failed (non-fatal):', protectRes.status);
+  } catch (e) {
+    console.warn('[DriveSync] Failed to protect header row (non-fatal):', e);
+  }
+
+  await setLocal({
+    historySpreadsheetId: spreadsheetId,
+    historySpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+  });
+
+  return { id: spreadsheetId, sheetId, tabName };
+}
+
+// Makes sure the dedicated history spreadsheet exists, creating it on first
+// use. If the stored id 404s (user trashed the file), recreates it —
+// moving/renaming the file elsewhere in Drive is harmless since
+// spreadsheetId is permanent and location-independent, so 404 is the only
+// case that needs recovery here.
+async function ensureHistorySpreadsheet(token) {
+  if (historySpreadsheetCache) return historySpreadsheetCache;
+
+  const { historySpreadsheetId } = await getLocal(['historySpreadsheetId']);
+
+  if (historySpreadsheetId) {
+    const metaRes = await fetch(
+      `${SHEETS_API_BASE}/${historySpreadsheetId}?fields=sheets.properties(sheetId,title)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (metaRes.status === 404) {
+      console.warn('[DriveSync] History spreadsheet no longer exists — recreating.');
+    } else {
+      assertOk(metaRes, 'History sheet metadata fetch failed', token);
+      const meta = await metaRes.json();
+      const sheet = (meta.sheets || [])[0];
+      historySpreadsheetCache = {
+        id: historySpreadsheetId,
+        sheetId: sheet?.properties?.sheetId ?? 0,
+        tabName: sheet?.properties?.title ?? 'Sheet1',
+      };
+      return historySpreadsheetCache;
+    }
+  }
+
+  historySpreadsheetCache = await createHistorySpreadsheet(token);
+  return historySpreadsheetCache;
+}
+
+// Reads up to `limit` not-yet-synced records via the syncedAt index — never
+// the full store, since that's exactly what doesn't scale once history
+// reaches thousands of rows (see getAllLeads, which does load everything and
+// is fine for the once-in-a-while CSV export but not for a routine sync).
+function getUnsyncedLeadsChunk(limit) {
+  return openLeadsDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const index = tx.objectStore(STORE_NAME).index('syncedAt');
+        const results = [];
+        const req = index.openCursor(IDBKeyRange.only(0));
+        req.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (!cursor || results.length >= limit) {
+            resolve(results);
+            return;
+          }
+          results.push(cursor.value);
+          cursor.continue();
+        };
+        req.onerror = (e) => reject(e.target.error);
+      })
+  );
+}
+
+// Marks a chunk as synced in one transaction, AFTER its append already
+// succeeded. This is what makes a killed mid-backfill worker resumable: MV3
+// workers get terminated aggressively, and pushing thousands of backfilled
+// rows will rarely finish in one lifetime. Re-running just continues from
+// whatever the syncedAt index still reports as unsynced — no lost or
+// duplicated rows.
+function markLeadsSynced(records, syncedAt) {
+  return openLeadsDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        for (const record of records) {
+          record.syncedAt = syncedAt;
+          store.put(record);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+      })
+  );
+}
+
+function getUnsyncedCount() {
+  return openLeadsDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const index = tx.objectStore(STORE_NAME).index('syncedAt');
+        const req = index.count(IDBKeyRange.only(0));
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = (e) => reject(e.target.error);
+      })
+  );
+}
+
+// A lead promoted to 'Purchased' after it's already synced is deliberately
+// left stale in the sheet (a user decision) — this file never clears
+// syncedAt on an existing record, so no re-sync happens for it.
+async function runDriveSyncOnce() {
+  const token = await getSheetsAccessToken();
+  if (!token) return { ok: false, reason: 'not-connected' };
+
+  const sheet = await ensureHistorySpreadsheet(token);
+  const deviceId = await getOrCreateInstallId();
+
+  let totalSynced = 0;
+  for (;;) {
+    const chunk = await getUnsyncedLeadsChunk(DRIVE_SYNC_CHUNK_SIZE);
+    if (chunk.length === 0) break;
+
+    const range = `${sheet.tabName}!A1`;
+    const appendRes = await fetch(
+      `${SHEETS_API_BASE}/${sheet.id}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: chunk.map((lead) => buildLeadHistoryRow(lead, deviceId)) }),
+      }
+    );
+    assertOk(appendRes, 'History append failed', token);
+
+    await markLeadsSynced(chunk, Date.now());
+    totalSynced += chunk.length;
+  }
+
+  await setLocal({ lastDriveSyncAt: Date.now() });
+  return { ok: true, syncedCount: totalSynced };
+}
+
+// Entry point for every trigger (manual button, periodic alarm, on-open
+// staleness check). Guards against overlapping runs, and retries exactly
+// once on a 401 by clearing the stale cached token and re-fetching — the one
+// failure mode background sync can't just leave silent, since there's no
+// user around to click "reconnect."
+async function syncLeadsToDrive() {
+  if (driveSyncInFlight) return { ok: false, reason: 'already-syncing' };
+  driveSyncInFlight = true;
+  try {
+    const result = await runDriveSyncOnce();
+    driveSyncLastError = result.ok ? null : result.reason;
+    return result;
+  } catch (e) {
+    if (e && e.isAuthError) {
+      try {
+        await removeCachedAuthToken(e.authToken);
+        const result = await runDriveSyncOnce();
+        driveSyncLastError = result.ok ? null : result.reason;
+        return result;
+      } catch (e2) {
+        console.error('[DriveSync] failed after token retry:', e2);
+        driveSyncLastError = e2 instanceof Error ? e2.message : String(e2);
+        return { ok: false, reason: 'failed', error: driveSyncLastError };
+      }
+    }
+    console.error('[DriveSync] failed:', e);
+    driveSyncLastError = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: 'failed', error: driveSyncLastError };
+  } finally {
+    driveSyncInFlight = false;
+  }
+}
+
+// The panel's "on open" trigger. MV3 workers have no lifecycle hook for
+// "the user opened the extension" — the panel calling GET_DRIVE_SYNC_STATE on
+// mount is the only reliable wake signal, so that handler calls this.
+async function maybeStartDriveSync() {
+  if (driveSyncInFlight) return;
+  const { lastDriveSyncAt } = await getLocal(['lastDriveSyncAt']);
+  if (lastDriveSyncAt && Date.now() - lastDriveSyncAt < DRIVE_SYNC_STALE_MS) return;
+  await syncLeadsToDrive();
+}
+
+async function getDriveSyncState() {
+  const {
+    lastDriveSyncAt = null,
+    historySpreadsheetId = null,
+    historySpreadsheetUrl = null,
+  } = await getLocal(['lastDriveSyncAt', 'historySpreadsheetId', 'historySpreadsheetUrl']);
+  const unsyncedCount = await getUnsyncedCount().catch(() => null);
+  return {
+    status: driveSyncInFlight ? 'syncing' : driveSyncLastError ? 'error' : 'idle',
+    lastDriveSyncAt,
+    unsyncedCount,
+    historySpreadsheetId,
+    historySpreadsheetUrl,
+    error: driveSyncLastError,
+  };
 }
 
 let activeTabId = null;
@@ -628,6 +966,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error('[Cleanup] delete dummy leads failed:', e);
         sendResponse({ firebaseDeleted: null, sheetsDeleted: null, errors: [String(e)] });
       });
+    return true; // async sendResponse
+  }
+
+  if (message.type === 'SYNC_TO_DRIVE') {
+    syncLeadsToDrive()
+      .then((res) => sendResponse(res))
+      .catch((e) => {
+        console.error('[DriveSync] manual sync failed:', e);
+        sendResponse({ ok: false, reason: 'failed', error: e instanceof Error ? e.message : String(e) });
+      });
+    return true; // async sendResponse
+  }
+
+  if (message.type === 'GET_DRIVE_SYNC_STATE') {
+    getDriveSyncState()
+      .then((state) => sendResponse(state))
+      .catch((e) => {
+        console.error('[DriveSync] state fetch failed:', e);
+        sendResponse({
+          status: 'error',
+          lastDriveSyncAt: null,
+          unsyncedCount: null,
+          historySpreadsheetId: null,
+          historySpreadsheetUrl: null,
+          error: String(e),
+        });
+      });
+    // The panel calls this on mount — piggyback the "on open, sync if stale"
+    // trigger here, since it's the only reliable wake signal an MV3 worker
+    // gets for "the user opened the extension." Fire-and-forget: the response
+    // above reflects the pre-sync state, and chrome.storage.onChanged carries
+    // the update to the UI once the sync (if any) completes.
+    maybeStartDriveSync().catch((e) => console.error('[DriveSync] staleness check failed:', e));
     return true; // async sendResponse
   }
 
@@ -894,7 +1265,26 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
   return null;
 }
 
+const DRIVE_SYNC_ALARM_NAME = 'drive-sync-alarm';
+const DRIVE_SYNC_PERIOD_MINUTES = 24 * 60;
+
+// Only create it if it doesn't already exist — chrome.alarms.create()
+// reschedules an existing alarm of the same name to fire `period` minutes
+// from *now*, so calling this unconditionally on every worker wake (which
+// MV3 does often) would keep pushing the 24h mark out and the alarm would
+// never actually fire.
+chrome.alarms.get(DRIVE_SYNC_ALARM_NAME, (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create(DRIVE_SYNC_ALARM_NAME, { periodInMinutes: DRIVE_SYNC_PERIOD_MINUTES });
+  }
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === DRIVE_SYNC_ALARM_NAME) {
+    syncLeadsToDrive().catch((e) => console.error('[DriveSync] periodic sync failed:', e));
+    return;
+  }
+
   if (alarm.name !== 'timer-alarm' || !timerRunning || !activeTabId) return;
 
   // Re-validate entitlement every ENTITLEMENT_CHECK_INTERVAL cycles (and on the
@@ -982,8 +1372,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
                 ...lead,
                 firstSeenDate,
                 firstSeenTime,
+                firstSeenAtMs: now.getTime(),
                 reasons,
-                filtersAtFirstSeen: filtersSnapshot
+                filtersAtFirstSeen: filtersSnapshot,
+                // 0 = not yet synced to the Drive history sheet. A lead later
+                // promoted to 'Purchased' (see upsertLead) is deliberately
+                // left as-is here — its syncedAt is never cleared, so it's
+                // not re-pushed once already synced.
+                syncedAt: 0
               }).catch((err) => console.error('[DB] upsertLead failed:', err));
             });
 
@@ -1060,6 +1456,7 @@ async function maybeAutoStartFromTab(tabId, url) {
 
 chrome.runtime.onStartup.addListener(() => {
   autoStartClaimed = false;
+  maybeStartDriveSync().catch((e) => console.error('[DriveSync] startup staleness check failed:', e));
   setSession({ autoStartPending: true }).then(() => {
     // Covers a tab Chrome already restored/loaded before this listener's
     // async work finished (e.g. a fast session restore of a pinned tab).

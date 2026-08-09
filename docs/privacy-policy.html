@@ -25,7 +25,7 @@
 <body>
 
 <h1>Privacy Policy — Indiamart Lead Notifier</h1>
-<p class="updated">Effective date: July 29, 2026</p>
+<p class="updated">Effective date: August 9, 2026</p>
 
 <p>
   Indiamart Lead Notifier ("the extension") is a Chrome extension that monitors a
@@ -86,12 +86,15 @@
 <h2>2a. Google Sheets Access (Google API Services User Data)</h2>
 <p>
   If you choose to enable Google Sheets export, the extension requests your permission via
-  Google's OAuth flow to view and manage your Google Sheets (scope:
-  <code>https://www.googleapis.com/auth/spreadsheets</code>). This permission is used
-  <strong>exclusively</strong> to:
+  Google's OAuth flow using the
+  <code>https://www.googleapis.com/auth/drive.file</code> scope. This is a per-file
+  scope: it grants the extension access only to the single spreadsheet you explicitly
+  pick through Google's file picker, or that you create from within the extension —
+  never blanket access to your Google Drive or to any other file in your account. This
+  access is used <strong>exclusively</strong> to:
 </p>
 <ul>
-  <li>Confirm that the tab you named exists in the sheet you specified (creating it if it does not);</li>
+  <li>Confirm that the tab you named exists in the spreadsheet you picked (creating it if it does not);</li>
   <li>Write a header row into that tab if it is empty; and</li>
   <li>Append one row per purchased lead to that tab.</li>
 </ul>
@@ -100,7 +103,7 @@
   your Google account, and does not use this access for any purpose beyond writing the
   purchased-lead rows described above. You can revoke this access at any time from your
   <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account permissions page</a>,
-  or by clearing the sheet URL in the extension's settings.
+  or by clearing the connected sheet in the extension's settings.
 </p>
 <p>
   Indiamart Lead Notifier's use and transfer of information received from Google APIs to any

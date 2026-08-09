@@ -51,8 +51,25 @@ export interface LeadRecord {
   FK_GLCAT_MCAT_ID?: string | number;
   firstSeenDate?: string;
   firstSeenTime?: string;
+  // Epoch ms — added in IndexedDB v2. Absent on pre-migration rows that
+  // haven't been backfilled yet.
+  firstSeenAtMs?: number;
   reasons?: string;
   filtersAtFirstSeen?: LeadFiltersAtFirstSeen;
+  // 0 = not yet synced to the Drive history sheet; otherwise the epoch ms of
+  // the sync that wrote this row. See DriveSyncState below.
+  syncedAt?: number;
+}
+
+export type DriveSyncStatus = 'idle' | 'syncing' | 'error';
+
+export interface DriveSyncState {
+  status: DriveSyncStatus;
+  lastDriveSyncAt: number | null;
+  unsyncedCount: number | null;
+  historySpreadsheetId: string | null;
+  historySpreadsheetUrl: string | null;
+  error: string | null;
 }
 
 export type BackgroundCommandType = 'START_TIMER' | 'STOP_TIMER';
