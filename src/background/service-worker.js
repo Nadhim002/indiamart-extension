@@ -176,6 +176,11 @@ async function pruneDeadTokens(dbUrl, accountKey, idToken, deadTokens) {
 
 const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
 
+// The fixed placeholder buyer mobile runRealLeadTest() always uses — the one
+// signal that reliably marks a lead as a test/dummy rather than a real
+// purchase, since no real buyer plausibly has this exact number.
+const DUMMY_BUYER_MOBILE = '9000000000';
+
 // Resolves the cached OAuth token for the drive.file scope, or null if the
 // user hasn't picked a sheet yet (or the grant was revoked). Never prompts —
 // the interactive grant only happens from the panel's "Choose sheet" button.
@@ -265,6 +270,110 @@ async function writeLeadsToSheet(purchasedLeads) {
   }
 }
 
+// Deletes every lead identified as a test/dummy (DUMMY_BUYER_MOBILE) from
+// Firebase and from the currently-connected Sheets tab. The two sides are
+// independent — a failure or a "not connected" skip on one must not block
+// or hide the other's result.
+async function deleteDummyLeads() {
+  const result = { firebaseDeleted: null, sheetsDeleted: null, errors: [] };
+
+  const { googleEmail, googleIdToken, spreadsheetId, sheetTabName } = await getLocal([
+    'googleEmail',
+    'googleIdToken',
+    'spreadsheetId',
+    'sheetTabName',
+  ]);
+
+  if (googleEmail && googleIdToken) {
+    try {
+      const DB_URL = FIREBASE_CONFIG.databaseURL;
+      const accountKey = sanitizeEmail(googleEmail);
+      const res = await fetch(`${DB_URL}/accounts/${accountKey}/leads/new.json?auth=${googleIdToken}`);
+      if (!res.ok) throw new Error(`Firebase fetch failed: ${res.status}`);
+      const leads = (await res.json()) || {};
+      const dummyKeys = Object.entries(leads)
+        .filter(([, lead]) => lead && lead.buyerMobile === DUMMY_BUYER_MOBILE)
+        .map(([key]) => key);
+      await Promise.all(
+        dummyKeys.map((key) =>
+          fetch(`${DB_URL}/accounts/${accountKey}/leads/new/${key}.json?auth=${googleIdToken}`, {
+            method: 'DELETE',
+          })
+        )
+      );
+      result.firebaseDeleted = dummyKeys.length;
+    } catch (e) {
+      console.error('[Cleanup] Firebase dummy-lead delete failed:', e);
+      result.errors.push('Firebase: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  } else {
+    result.errors.push('Firebase: not signed in — skipped.');
+  }
+
+  if (spreadsheetId && sheetTabName) {
+    try {
+      const token = await getSheetsAccessToken();
+      if (!token) throw new Error('Not connected — reconnect the sheet.');
+
+      const metaRes = await fetch(
+        `${SHEETS_API_BASE}/${spreadsheetId}?fields=sheets.properties(sheetId,title)`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!metaRes.ok) throw new Error(`Sheet metadata fetch failed: ${metaRes.status}`);
+      const meta = await metaRes.json();
+      const tab = (meta.sheets || []).find((s) => s.properties?.title === sheetTabName);
+      if (!tab) throw new Error('Tab not found — reconnect the sheet.');
+      const gid = tab.properties.sheetId;
+
+      // Only the Buyer Mobile column is needed to find matching rows — one
+      // narrow column read is far cheaper than pulling every column.
+      const mobileCol = String.fromCharCode(65 + SHEET_HEADER_ROW.indexOf('Buyer Mobile'));
+      const colRange = `${sheetTabName}!${mobileCol}2:${mobileCol}`;
+      const colRes = await fetch(
+        `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(colRange)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!colRes.ok) throw new Error(`Column fetch failed: ${colRes.status}`);
+      const colData = await colRes.json();
+      const values = colData.values || [];
+
+      // Fetched starting at row 2 (skipping the header), so data row `i`
+      // (0-based array index) sits at 0-based sheet row index `i + 1`.
+      const matchingRowIndexes = [];
+      values.forEach((row, i) => {
+        if (row[0] === DUMMY_BUYER_MOBILE) matchingRowIndexes.push(i + 1);
+      });
+
+      if (matchingRowIndexes.length > 0) {
+        // Descending order: batchUpdate applies requests in array order and
+        // reindexes after each delete, so deleting bottom-up in one call
+        // keeps earlier deletions from shifting the rows still to come.
+        const requests = matchingRowIndexes
+          .sort((a, b) => b - a)
+          .map((rowIndex) => ({
+            deleteDimension: {
+              range: { sheetId: gid, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 },
+            },
+          }));
+        const batchRes = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}:batchUpdate`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requests }),
+        });
+        if (!batchRes.ok) throw new Error(`Row delete failed: ${batchRes.status}`);
+      }
+      result.sheetsDeleted = matchingRowIndexes.length;
+    } catch (e) {
+      console.error('[Cleanup] Sheets dummy-lead delete failed:', e);
+      result.errors.push('Sheets: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  } else {
+    result.errors.push('Sheets: no sheet connected — skipped.');
+  }
+
+  return result;
+}
+
 // One-shot "real lead" test: run the real fetch (no filtering, no purchase),
 // take the first lead, and deliver a notification with its real details but a
 // placeholder buyer (name "Test Buyer", phone 9000000000). Reuses
@@ -317,7 +426,7 @@ async function runRealLeadTest(tabId) {
     GLUSR_CITY: first.GLUSR_CITY,
     GLUSR_STATE: first.GLUSR_STATE,
     buyerName: 'Test Buyer',
-    buyerMobile: '9000000000',
+    buyerMobile: DUMMY_BUYER_MOBILE,
     boughtDate: now.toISOString().slice(0, 10),
     boughtTime: now.toTimeString().slice(0, 8),
   };
@@ -500,6 +609,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((e) => {
         console.error('[Test] real-lead test failed:', e);
         sendResponse({ ok: false, reason: 'fetch-failed' });
+      });
+    return true; // async sendResponse
+  }
+
+  if (message.type === 'DELETE_DUMMY_LEADS') {
+    deleteDummyLeads()
+      .then((res) => sendResponse(res))
+      .catch((e) => {
+        console.error('[Cleanup] delete dummy leads failed:', e);
+        sendResponse({ firebaseDeleted: null, sheetsDeleted: null, errors: [String(e)] });
       });
     return true; // async sendResponse
   }

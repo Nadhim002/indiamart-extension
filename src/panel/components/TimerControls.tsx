@@ -122,7 +122,7 @@ export default function TimerControls({
           value={phoneNumber}
           onChange={(e) => setPhoneNumber(e.target.value)}
           disabled={isRunning}
-          placeholder="e.g. 9842142030"
+          placeholder="e.g. 9876543210"
         />
       </div>
 

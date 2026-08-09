@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import DeviceList from '@/components/DeviceList';
 import type { DeviceView } from '@/hooks/useAccountDevices';
-import { sendRealLeadTest } from '@/lib/testNotification';
+import { sendRealLeadTest, deleteDummyLeads } from '@/lib/testNotification';
 
 interface MyDevicesProps {
   computers: DeviceView[];
@@ -50,6 +50,30 @@ export default function MyDevices({
     }
   };
 
+  const runDeleteDummyLeads = async () => {
+    const confirmed = window.confirm(
+      "Delete all dummy test leads from Firebase and the connected sheet? This can't be undone."
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    setStatus('Deleting…');
+    try {
+      const result = await deleteDummyLeads();
+      const parts: string[] = [];
+      if (result.firebaseDeleted !== null) parts.push(`${result.firebaseDeleted} from Firebase`);
+      if (result.sheetsDeleted !== null) parts.push(`${result.sheetsDeleted} from Sheets`);
+      const summary = parts.length > 0 ? `Deleted ${parts.join(', ')}.` : 'Nothing deleted.';
+      const suffix = result.errors.length > 0 ? ` (${result.errors.join(' ')})` : '';
+      setStatus(summary + suffix);
+    } catch (e) {
+      console.error('[Cleanup] delete dummy leads threw:', e);
+      setStatus('Delete failed — see console for details.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="mt-6 space-y-4">
       <div className="space-y-2">
@@ -71,6 +95,14 @@ export default function MyDevices({
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" disabled={busy} onClick={() => runTest()}>
               Test notification
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1"
+              disabled={busy}
+              onClick={() => runDeleteDummyLeads()}
+            >
+              Delete dummy leads
             </Button>
           </div>
           {status && <p className="text-xs text-muted-foreground" role="status">{status}</p>}

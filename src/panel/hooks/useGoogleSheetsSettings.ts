@@ -8,6 +8,8 @@ import { FIREBASE_CONFIG } from '@shared/firebaseConfig';
 const PICKER_ORIGIN = 'https://indiamart-extension-notifier.firebaseapp.com';
 const PICKER_URL = `${PICKER_ORIGIN}/picker.html`;
 
+const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
+
 // Google Sheets export settings live in chrome.storage.local — not the
 // localStorage-backed useSettings seam — since they're cross-context
 // connection config the service worker reads directly (like
@@ -20,8 +22,50 @@ export function useGoogleSheetsSettings() {
   const [spreadsheetId, setSpreadsheetId] = useState('');
   const [spreadsheetName, setSpreadsheetName] = useState('');
   const [sheetTabName, setSheetTabName] = useState('');
+  const [tabs, setTabs] = useState<string[]>([]);
+  const [tabsLoading, setTabsLoading] = useState(false);
+  const [tabsError, setTabsError] = useState<string | null>(null);
 
   const loadedRef = useRef(false);
+
+  // Lists the tabs in `id` via a non-interactive token (same cached grant
+  // writeLeadsToSheet uses in the background) — never prompts, since this
+  // only runs while a sheet is already connected.
+  const fetchTabsFor = (id: string) => {
+    setTabsLoading(true);
+    setTabsError(null);
+    chrome.identity.getAuthToken({ interactive: false }, async (token) => {
+      if (chrome.runtime.lastError || !token) {
+        setTabsError(chrome.runtime.lastError?.message ?? 'Not connected — reconnect the sheet.');
+        setTabsLoading(false);
+        return;
+      }
+      try {
+        const res = await fetch(`${SHEETS_API_BASE}/${id}?fields=sheets.properties.title`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`Sheet metadata fetch failed: ${res.status}`);
+        const data = await res.json();
+        const titles = (data.sheets || [])
+          .map((s: { properties?: { title?: string } }) => s.properties?.title)
+          .filter((t: string | undefined): t is string => typeof t === 'string');
+        setTabs(titles);
+      } catch (e) {
+        setTabsError(e instanceof Error ? e.message : 'Failed to load tabs');
+      } finally {
+        setTabsLoading(false);
+      }
+    });
+  };
+
+  // A previously-picked tab that no longer exists in the fetched list (e.g.
+  // renamed/deleted directly in Sheets) must not be silently kept — clear it
+  // so the panel's "select a tab" warning prompts a re-pick instead.
+  useEffect(() => {
+    if (sheetTabName && tabs.length > 0 && !tabs.includes(sheetTabName)) {
+      setSheetTabName('');
+    }
+  }, [tabs, sheetTabName]);
 
   useEffect(() => {
     chrome.storage.local.get(['spreadsheetId', 'spreadsheetName', 'sheetTabName'], (r) => {
@@ -29,6 +73,7 @@ export function useGoogleSheetsSettings() {
       if (typeof r.spreadsheetName === 'string') setSpreadsheetName(r.spreadsheetName);
       if (typeof r.sheetTabName === 'string') setSheetTabName(r.sheetTabName);
       loadedRef.current = true;
+      if (typeof r.spreadsheetId === 'string' && r.spreadsheetId) fetchTabsFor(r.spreadsheetId);
     });
 
     const onChanged = (
@@ -95,12 +140,16 @@ export function useGoogleSheetsSettings() {
             );
           } else if (data?.type === 'PICKER_RESULT') {
             if (data.ok) {
+              const isNewSheet = data.spreadsheetId !== spreadsheetId;
               chrome.storage.local.set({
                 spreadsheetId: data.spreadsheetId,
                 spreadsheetName: data.spreadsheetName,
+                ...(isNewSheet ? { sheetTabName: '' } : {}),
               });
               setSpreadsheetId(data.spreadsheetId);
               setSpreadsheetName(data.spreadsheetName);
+              if (isNewSheet) setSheetTabName('');
+              fetchTabsFor(data.spreadsheetId);
               finish({ ok: true });
             } else {
               finish({ ok: false, reason: data.reason });
@@ -122,6 +171,11 @@ export function useGoogleSheetsSettings() {
     chrome.storage.local.remove(['spreadsheetId', 'spreadsheetName']);
     setSpreadsheetId('');
     setSpreadsheetName('');
+    setTabs([]);
+  };
+
+  const refreshTabs = () => {
+    if (spreadsheetId) fetchTabsFor(spreadsheetId);
   };
 
   return {
@@ -129,6 +183,10 @@ export function useGoogleSheetsSettings() {
     spreadsheetName,
     sheetTabName,
     setSheetTabName,
+    tabs,
+    tabsLoading,
+    tabsError,
+    refreshTabs,
     connected: Boolean(spreadsheetId),
     pickSheet,
     clearSheet,

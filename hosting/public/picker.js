@@ -61,6 +61,13 @@ function openPicker(token, developerKey) {
   setStatus('');
   const createBtn = document.createElement('button');
   createBtn.textContent = 'Create a new spreadsheet instead';
+  // Picker renders its own full-page overlay with a very high z-index once
+  // visible, which sits on top of normal page content — without this, the
+  // button is present in the DOM but unclickable underneath that overlay.
+  createBtn.style.position = 'fixed';
+  createBtn.style.top = '12px';
+  createBtn.style.left = '12px';
+  createBtn.style.zIndex = '2147483647';
   createBtn.onclick = async () => {
     createBtn.disabled = true;
     setStatus('Creating spreadsheet…');
@@ -73,9 +80,13 @@ function openPicker(token, developerKey) {
       createBtn.disabled = false;
     }
   };
-  document.body.appendChild(createBtn);
-
   picker.setVisible(true);
+
+  // Picker injects its own overlay asynchronously (it loads an iframe), so
+  // appending right after setVisible() can still race it. With equal
+  // z-index the later DOM element wins ties, so wait a beat before adding
+  // ours last, to land after Picker's elements are actually in the DOM.
+  setTimeout(() => document.body.appendChild(createBtn), 300);
 }
 
 async function init(token, developerKey) {
