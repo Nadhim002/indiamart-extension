@@ -52,7 +52,7 @@ export default function MyDevices({
 
   const runDeleteDummyLeads = async () => {
     const confirmed = window.confirm(
-      "Delete all dummy test leads from Firebase and the connected sheet? This can't be undone."
+      "Delete all dummy test leads from DataBase and the connected sheet? This can't be undone."
     );
     if (!confirmed) return;
 
@@ -61,7 +61,7 @@ export default function MyDevices({
     try {
       const result = await deleteDummyLeads();
       const parts: string[] = [];
-      if (result.firebaseDeleted !== null) parts.push(`${result.firebaseDeleted} from Firebase`);
+      if (result.firebaseDeleted !== null) parts.push(`${result.firebaseDeleted} from DataBase`);
       if (result.sheetsDeleted !== null) parts.push(`${result.sheetsDeleted} from Sheets`);
       const summary = parts.length > 0 ? `Deleted ${parts.join(', ')}.` : 'Nothing deleted.';
       const suffix = result.errors.length > 0 ? ` (${result.errors.join(' ')})` : '';

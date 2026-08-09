@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { FIREBASE_CONFIG } from '@shared/firebaseConfig';
+import { SHEET_HEADER_ROW, headerMatchesExpected } from '@shared/sheetsPayload';
 
 // Hosted on Firebase Hosting rather than shipped as a manifest sandboxed
 // page — Google's Picker library needs a real, non-opaque origin to
@@ -25,6 +26,9 @@ export function useGoogleSheetsSettings() {
   const [tabs, setTabs] = useState<string[]>([]);
   const [tabsLoading, setTabsLoading] = useState(false);
   const [tabsError, setTabsError] = useState<string | null>(null);
+  const [headerStatus, setHeaderStatus] = useState<'unknown' | 'checking' | 'empty' | 'match' | 'mismatch'>(
+    'unknown'
+  );
 
   const loadedRef = useRef(false);
 
@@ -66,6 +70,46 @@ export function useGoogleSheetsSettings() {
       setSheetTabName('');
     }
   }, [tabs, sheetTabName]);
+
+  // Checks the selected tab's header row so the panel can warn (without
+  // blocking — see ensureTabAndHeader's write-time counterpart) if leads
+  // would land under the wrong columns. Only the selected tab is checked,
+  // not every tab in the dropdown, to keep this to one extra call.
+  useEffect(() => {
+    if (!spreadsheetId || !sheetTabName) {
+      setHeaderStatus('unknown');
+      return;
+    }
+    let cancelled = false;
+    setHeaderStatus('checking');
+    const range = `${sheetTabName}!A1:${String.fromCharCode(65 + SHEET_HEADER_ROW.length - 1)}1`;
+    chrome.identity.getAuthToken({ interactive: false }, async (token) => {
+      if (cancelled) return;
+      if (chrome.runtime.lastError || !token) {
+        setHeaderStatus('unknown');
+        return;
+      }
+      try {
+        const res = await fetch(
+          `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok) throw new Error(`Header check failed: ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (!data.values || data.values.length === 0) {
+          setHeaderStatus('empty');
+        } else {
+          setHeaderStatus(headerMatchesExpected(data.values[0]) ? 'match' : 'mismatch');
+        }
+      } catch {
+        if (!cancelled) setHeaderStatus('unknown');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [spreadsheetId, sheetTabName]);
 
   useEffect(() => {
     chrome.storage.local.get(['spreadsheetId', 'spreadsheetName', 'sheetTabName'], (r) => {
@@ -187,6 +231,7 @@ export function useGoogleSheetsSettings() {
     tabsLoading,
     tabsError,
     refreshTabs,
+    headerStatus,
     connected: Boolean(spreadsheetId),
     pickSheet,
     clearSheet,

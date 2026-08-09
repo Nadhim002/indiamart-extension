@@ -15,6 +15,14 @@ export const SHEET_HEADER_ROW = [
   'State',
 ];
 
+// True if `values` (a sheet's A1:I1 row) is exactly SHEET_HEADER_ROW, in
+// order — extra columns past I are ignored since writes only ever touch
+// A:I, so an unrelated trailing column (e.g. "Notes") is harmless.
+export function headerMatchesExpected(values: unknown[] | undefined | null): boolean {
+  if (!values) return false;
+  return SHEET_HEADER_ROW.every((expected, i) => values[i] === expected);
+}
+
 export interface PurchasedLead {
   boughtDate?: string | null;
   boughtTime?: string | null;

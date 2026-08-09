@@ -4,7 +4,7 @@ import { buildExpoMessage } from '@shared/pushPayload';
 import { rejectionReason } from '@shared/leadPolicy';
 import { sanitizeEmail } from '@shared/email';
 import { getEntitlement } from '@shared/entitlement';
-import { SHEET_HEADER_ROW, buildSheetRow } from '@shared/sheetsPayload';
+import { SHEET_HEADER_ROW, buildSheetRow, headerMatchesExpected } from '@shared/sheetsPayload';
 
 function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -238,6 +238,14 @@ async function ensureTabAndHeader(token, spreadsheetId, tabName) {
       }
     );
     if (!writeHeaderRes.ok) throw new Error(`Header write failed: ${writeHeaderRes.status}`);
+  } else if (!headerMatchesExpected(headerData.values[0])) {
+    // Warn, don't block — the panel already surfaces this same mismatch as
+    // a non-blocking warning at tab-selection time, and this is just the
+    // write-path's safety net in case the header changed after selection.
+    console.warn(
+      `[Sheets] Tab "${tabName}" header doesn't match the expected columns — leads may land misaligned.`,
+      headerData.values[0]
+    );
   }
 }
 

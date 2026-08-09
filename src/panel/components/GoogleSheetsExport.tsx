@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useGoogleSheetsSettings } from '@/hooks/useGoogleSheetsSettings';
+import { SHEET_HEADER_ROW } from '@shared/sheetsPayload';
 
 export default function GoogleSheetsExport() {
   const {
@@ -14,6 +15,7 @@ export default function GoogleSheetsExport() {
     tabsLoading,
     tabsError,
     refreshTabs,
+    headerStatus,
     connected,
     pickSheet,
   } = useGoogleSheetsSettings();
@@ -77,6 +79,12 @@ export default function GoogleSheetsExport() {
         {!tabsError && connected && !tabsLoading && !sheetTabName && (
           <p className="text-xs text-muted-foreground" role="status">
             Select a tab to enable Sheets export.
+          </p>
+        )}
+        {!tabsError && sheetTabName && headerStatus === 'mismatch' && (
+          <p className="text-xs text-amber-600" role="alert">
+            This tab's header row doesn't match the expected columns — leads may land
+            misaligned. Expected: {SHEET_HEADER_ROW.join(', ')}.
           </p>
         )}
       </div>
