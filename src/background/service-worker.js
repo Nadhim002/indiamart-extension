@@ -583,6 +583,44 @@ function getOrCreateInstallId() {
   });
 }
 
+// chrome.storage.local is per-Chrome-profile, not shared across computers —
+// so the pointer to which spreadsheet is "the" history sheet has to live
+// somewhere actually shared per account. Firebase RTDB already is (same
+// place computers/phones/leads live), so it's the broker: whichever computer
+// creates the spreadsheet first publishes its id here, and every other
+// computer checks here before ever considering creating its own. Without
+// this, each computer would create its own separate spreadsheet the first
+// time it synced, defeating the point of a shared history sheet entirely.
+async function getSharedHistorySpreadsheetId() {
+  const { googleEmail, googleIdToken } = await getLocal(['googleEmail', 'googleIdToken']);
+  if (!googleEmail || !googleIdToken) return null;
+  try {
+    const key = sanitizeEmail(googleEmail);
+    const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/accounts/${key}/driveSync.json?auth=${googleIdToken}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.historySpreadsheetId ? data : null;
+  } catch (e) {
+    console.warn('[DriveSync] Firebase lookup failed (non-fatal):', e);
+    return null;
+  }
+}
+
+async function publishSharedHistorySpreadsheetId(id, url) {
+  const { googleEmail, googleIdToken } = await getLocal(['googleEmail', 'googleIdToken']);
+  if (!googleEmail || !googleIdToken) return;
+  try {
+    const key = sanitizeEmail(googleEmail);
+    await fetch(`${FIREBASE_CONFIG.databaseURL}/accounts/${key}/driveSync.json?auth=${googleIdToken}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ historySpreadsheetId: id, historySpreadsheetUrl: url }),
+    });
+  } catch (e) {
+    console.warn('[DriveSync] Firebase publish failed (non-fatal):', e);
+  }
+}
+
 function removeCachedAuthToken(token) {
   return new Promise((resolve) => {
     if (!token) {
@@ -659,23 +697,33 @@ async function createHistorySpreadsheet(token) {
     console.warn('[DriveSync] Failed to protect header row (non-fatal):', e);
   }
 
-  await setLocal({
-    historySpreadsheetId: spreadsheetId,
-    historySpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
-  });
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  await setLocal({ historySpreadsheetId: spreadsheetId, historySpreadsheetUrl: url });
+  // Publish immediately so any other computer on this account converges onto
+  // this spreadsheet instead of creating its own — see
+  // getSharedHistorySpreadsheetId's comment for why this has to go through
+  // Firebase rather than chrome.storage.local.
+  await publishSharedHistorySpreadsheetId(spreadsheetId, url);
 
   return { id: spreadsheetId, sheetId, tabName };
 }
 
 // Makes sure the dedicated history spreadsheet exists, creating it on first
-// use. If the stored id 404s (user trashed the file), recreates it —
-// moving/renaming the file elsewhere in Drive is harmless since
-// spreadsheetId is permanent and location-independent, so 404 is the only
-// case that needs recovery here.
+// use. Checks three sources in order: this worker's in-memory cache, then
+// the shared Firebase pointer (so a second computer finds what the first one
+// already created), then this device's own local storage as a last resort
+// before creating a new one. If the resolved id 404s (user trashed the
+// file), recreates it — moving/renaming the file elsewhere in Drive is
+// harmless since spreadsheetId is permanent and location-independent, so 404
+// is the only case that needs recovery here.
 async function ensureHistorySpreadsheet(token) {
   if (historySpreadsheetCache) return historySpreadsheetCache;
 
-  const { historySpreadsheetId } = await getLocal(['historySpreadsheetId']);
+  const shared = await getSharedHistorySpreadsheetId();
+  let historySpreadsheetId = shared?.historySpreadsheetId;
+  if (!historySpreadsheetId) {
+    ({ historySpreadsheetId } = await getLocal(['historySpreadsheetId']));
+  }
 
   if (historySpreadsheetId) {
     const metaRes = await fetch(
@@ -693,6 +741,13 @@ async function ensureHistorySpreadsheet(token) {
         sheetId: sheet?.properties?.sheetId ?? 0,
         tabName: sheet?.properties?.title ?? 'Sheet1',
       };
+      // Keep this device's own local copy in step with whichever spreadsheet
+      // is actually canonical, even when it was another computer that
+      // created it — this is what the panel's "open sheet" link reads.
+      await setLocal({
+        historySpreadsheetId,
+        historySpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${historySpreadsheetId}/edit`,
+      });
       return historySpreadsheetCache;
     }
   }

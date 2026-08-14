@@ -65,6 +65,15 @@
   directly, and is collected solely to notify you about leads you have already
   chosen to purchase.
 </p>
+<p>
+  Separately, for <strong>every</strong> lead the extension observes — not only
+  the ones it purchases — it keeps a local record of: the lead's title, city,
+  state, category, approximate order value, quantity, and how long ago it was
+  posted; whether it matched your filters and, if not, why; and the filter
+  settings that were active at the time. This lead history does <strong>not</strong>
+  include the buyer's name or mobile number unless that specific lead was
+  purchased.
+</p>
 
 <p><strong>Authentication data:</strong></p>
 <ul>
@@ -80,6 +89,7 @@
   <li>Verify your sign-in and enforce your subscription/device seat limits</li>
   <li>Persist your settings between sessions</li>
   <li>If enabled: append a row (purchase date/time, product title, approximate order value, quantity, buyer name, buyer mobile, city, state) to the Google Sheet tab you specified, each time a lead is purchased</li>
+  <li>Sync your lead history (every lead observed, matched or not, together with the filter settings active when it was seen — never the buyer's name or mobile number unless that lead was purchased) to a private spreadsheet automatically created in your own Google Drive, for your own record-keeping and any analysis you choose to do with it</li>
 </ul>
 <p>We do not use this data for advertising, profiling, or any purpose unrelated to the above.</p>
 
@@ -112,11 +122,39 @@
   including the Limited Use requirements.
 </p>
 
+<h2>2b. Google Drive Lead History Sync (Google API Services User Data)</h2>
+<p>
+  The extension also uses the same <code>https://www.googleapis.com/auth/drive.file</code>
+  scope described in Section 2a to automatically create and maintain a spreadsheet named
+  <strong>"IndiaMART Lead History"</strong> in your own Google Drive — no separate
+  permission or file picker step is needed, since <code>drive.file</code> already
+  covers files the extension creates itself. This access is used
+  <strong>exclusively</strong> to:
+</p>
+<ul>
+  <li>Create that spreadsheet the first time this feature runs, if it does not already exist;</li>
+  <li>Write its header row; and</li>
+  <li>Append one row per lead the extension has observed — the fields listed in Section 1, and never the buyer's name or mobile number unless that lead was purchased.</li>
+</ul>
+<p>
+  This sync runs automatically (roughly once every 24 hours, and when you open the
+  extension if more than 24 hours have passed since the last sync), and can also be
+  triggered manually from the extension's panel. As with Section 2a, the extension does
+  not read, browse, list, or modify any other spreadsheet, tab, or file in your Google
+  account, and this data is written only to a spreadsheet in your own Google account —
+  never to a server we operate. You can revoke this access at any time from your
+  <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google Account permissions page</a>,
+  which disconnects both this feature and the Sheets export in Section 2a, since they
+  share the same OAuth grant. The Limited Use and Google API Services User Data Policy
+  commitments in Section 2a apply equally here.
+</p>
+
 <h2>3. Where Data Is Stored</h2>
 <ul>
-  <li><strong>On your device:</strong> lead history and app settings are stored locally in your browser (IndexedDB / <code>chrome.storage.local</code>).</li>
+  <li><strong>On your device:</strong> lead history (every lead observed, not only purchases) and app settings are stored locally in your browser (IndexedDB / <code>chrome.storage.local</code>).</li>
   <li><strong>Firebase Realtime Database (Google Cloud):</strong> your account's leads, registered devices, and entitlement status are stored here so alerts can reach your phone in real time.</li>
-  <li><strong>Your own Google Sheet:</strong> if you enable Sheets export, purchased-lead rows are written directly to the specific Google Sheet you provided — a spreadsheet in your own Google account, not one we host or control.</li>
+  <li><strong>Your own Google Sheet (purchased leads):</strong> if you enable Sheets export, purchased-lead rows are written directly to the specific Google Sheet you provided — a spreadsheet in your own Google account, not one we host or control.</li>
+  <li><strong>Your own Google Drive (lead history):</strong> the "IndiaMART Lead History" spreadsheet described in Section 2b is created and stored in your own Google Drive — likewise not hosted or controlled by us.</li>
 </ul>
 
 <h2>4. Third-Party Services</h2>
@@ -125,7 +163,7 @@
   <li><strong>Google Firebase</strong> — authentication and real-time data storage.</li>
   <li><strong>Expo Push Notification Service (exp.host)</strong> — delivers push notifications (including the buyer's name/city/state) to your registered phone(s).</li>
   <li><strong>IndiaMART (seller.indiamart.com)</strong> — the source of lead data and the destination of lead-purchase requests, made using your own authenticated session.</li>
-  <li><strong>Google Sheets API (sheets.googleapis.com)</strong> — only if you enable Sheets export; used to write purchased-lead rows into the spreadsheet tab you specified, as described in Section 2a.</li>
+  <li><strong>Google Sheets API (sheets.googleapis.com)</strong> — used to write purchased-lead rows into the spreadsheet tab you specified (Section 2a), if you enable Sheets export, and to maintain the "IndiaMART Lead History" spreadsheet in your own Drive (Section 2b).</li>
 </ul>
 <p>We do not sell, rent, or transfer this data to any other third party, and we do not use it to determine creditworthiness or for lending purposes.</p>
 
