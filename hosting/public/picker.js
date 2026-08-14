@@ -45,6 +45,13 @@ function openPicker(token, developerKey) {
   const picker = new google.picker.PickerBuilder()
     .setOAuthToken(token)
     .setDeveloperKey(developerKey)
+    // Required for drive.file scope to actually grant access to files this
+    // app did NOT create (e.g. picked from this DocsView list) — without it,
+    // PICKED still fires with a real file id, but every later Sheets API
+    // call against that id 404s because the per-file grant never registers.
+    // Files created via createNewSpreadsheet() above don't need this, since
+    // creation grants access unconditionally.
+    .setAppId('797004741619')
     .addView(view)
     .setCallback((data) => {
       if (data.action === google.picker.Action.PICKED) {
