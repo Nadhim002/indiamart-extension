@@ -255,7 +255,7 @@ async function ensureTabAndHeader(token, spreadsheetId, tabName) {
 // in this file (Firebase, Expo) — a failure here must never block or affect
 // the phone-notification path.
 async function writeLeadsToSheet(purchasedLeads) {
-  const { spreadsheetId, sheetTabName } = await getLocal(['spreadsheetId', 'sheetTabName']);
+  const { spreadsheetId, sheetTabName } = await resolveLeadSheet();
   if (!spreadsheetId || !sheetTabName) return;
 
   const token = await getSheetsAccessToken();
@@ -286,12 +286,8 @@ async function writeLeadsToSheet(purchasedLeads) {
 async function deleteDummyLeads() {
   const result = { firebaseDeleted: null, sheetsDeleted: null, errors: [] };
 
-  const { googleEmail, googleIdToken, spreadsheetId, sheetTabName } = await getLocal([
-    'googleEmail',
-    'googleIdToken',
-    'spreadsheetId',
-    'sheetTabName',
-  ]);
+  const { googleEmail, googleIdToken } = await getLocal(['googleEmail', 'googleIdToken']);
+  const { spreadsheetId, sheetTabName } = await resolveLeadSheet();
 
   if (googleEmail && googleIdToken) {
     try {
@@ -619,6 +615,51 @@ async function publishSharedHistorySpreadsheetId(id, url) {
   } catch (e) {
     console.warn('[DriveSync] Firebase publish failed (non-fatal):', e);
   }
+}
+
+// The lead-bought sheet is picked from the panel (which writes this node
+// directly via the Firebase SDK — see useGoogleSheetsSettings.ts), but this
+// device's own chrome.storage.local copy can be stale if another computer
+// picked a different sheet more recently. Same shared-pointer rationale as
+// getSharedHistorySpreadsheetId above, just for a different node.
+async function getSharedLeadSheet() {
+  const { googleEmail, googleIdToken } = await getLocal(['googleEmail', 'googleIdToken']);
+  if (!googleEmail || !googleIdToken) return null;
+  try {
+    const key = sanitizeEmail(googleEmail);
+    const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/accounts/${key}/leadSheet.json?auth=${googleIdToken}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.spreadsheetId ? data : null;
+  } catch (e) {
+    console.warn('[Sheets] Firebase lookup failed (non-fatal):', e);
+    return null;
+  }
+}
+
+// Resolves the lead-bought sheet to write to, preferring the Firebase-shared
+// pointer over this device's own copy and keeping the local copy in step
+// (same pattern as ensureHistorySpreadsheet) so the panel doesn't lag behind
+// a pick made on another computer.
+async function resolveLeadSheet() {
+  const shared = await getSharedLeadSheet();
+  if (shared?.spreadsheetId) {
+    const local = await getLocal(['spreadsheetId', 'spreadsheetName', 'sheetTabName']);
+    const sharedTabName = shared.sheetTabName ?? '';
+    if (
+      shared.spreadsheetId !== local.spreadsheetId ||
+      shared.spreadsheetName !== local.spreadsheetName ||
+      sharedTabName !== local.sheetTabName
+    ) {
+      await setLocal({
+        spreadsheetId: shared.spreadsheetId,
+        spreadsheetName: shared.spreadsheetName,
+        sheetTabName: sharedTabName,
+      });
+    }
+    return { spreadsheetId: shared.spreadsheetId, sheetTabName: sharedTabName };
+  }
+  return getLocal(['spreadsheetId', 'sheetTabName']);
 }
 
 function removeCachedAuthToken(token) {

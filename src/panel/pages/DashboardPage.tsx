@@ -211,7 +211,7 @@ export default function DashboardPage({
         </TabsContent>
 
         <TabsContent value="export" forceMount>
-          <GoogleSheetsExport />
+          <GoogleSheetsExport googleUser={googleUser} />
           <DriveSyncExport />
           <CsvDownload onExportCSV={handleExportCSV} />
         </TabsContent>

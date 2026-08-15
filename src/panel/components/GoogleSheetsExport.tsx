@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { User } from 'firebase/auth/web-extension';
 import { RefreshCw } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -6,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { useGoogleSheetsSettings } from '@/hooks/useGoogleSheetsSettings';
 import { SHEET_HEADER_ROW } from '@shared/sheetsPayload';
 
-export default function GoogleSheetsExport() {
+export default function GoogleSheetsExport({ googleUser }: { googleUser: User }) {
   const {
     spreadsheetName,
     sheetTabName,
@@ -18,7 +19,7 @@ export default function GoogleSheetsExport() {
     headerStatus,
     connected,
     pickSheet,
-  } = useGoogleSheetsSettings();
+  } = useGoogleSheetsSettings(googleUser);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 

@@ -1,4 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
+import type { User } from 'firebase/auth/web-extension';
+import { getDatabase, ref, set as dbSet, get as dbGet } from 'firebase/database';
+import { getFirebaseApp } from '@/lib/firebase';
+import { sanitizeEmail } from '@shared/email';
 import { FIREBASE_CONFIG } from '@shared/firebaseConfig';
 import { SHEET_HEADER_ROW, headerMatchesExpected } from '@shared/sheetsPayload';
 
@@ -19,7 +23,13 @@ const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
 // spreadsheetId/spreadsheetName are set only via pickSheet() (Google Picker,
 // drive.file scope) — the user never types a URL/ID by hand, so there's no
 // parsing step and no way for the two to disagree.
-export function useGoogleSheetsSettings() {
+//
+// Also mirrored to Firebase RTDB at accounts/{email}/leadSheet, the same way
+// historySpreadsheetId is mirrored for Drive Sync (see service-worker.js's
+// getSharedHistorySpreadsheetId) — so a sheet picked on one computer is the
+// same sheet every other computer on the account writes to, instead of each
+// one accumulating its own separate pick.
+export function useGoogleSheetsSettings(user: User) {
   const [spreadsheetId, setSpreadsheetId] = useState('');
   const [spreadsheetName, setSpreadsheetName] = useState('');
   const [sheetTabName, setSheetTabName] = useState('');
@@ -31,6 +41,16 @@ export function useGoogleSheetsSettings() {
   );
 
   const loadedRef = useRef(false);
+  const key = user.email ? sanitizeEmail(user.email) : null;
+
+  const publishLeadSheet = (id: string, name: string, tabName: string) => {
+    if (!key) return;
+    dbSet(ref(getDatabase(getFirebaseApp()), `accounts/${key}/leadSheet`), {
+      spreadsheetId: id,
+      spreadsheetName: name,
+      sheetTabName: tabName,
+    });
+  };
 
   // Lists the tabs in `id` via a non-interactive token (same cached grant
   // writeLeadsToSheet uses in the background) — never prompts, since this
@@ -111,14 +131,51 @@ export function useGoogleSheetsSettings() {
     };
   }, [spreadsheetId, sheetTabName]);
 
+  // Firebase is checked first and wins over the local copy — the same
+  // priority order service-worker.js's ensureHistorySpreadsheet uses — so a
+  // sheet picked on another computer shows up here without a re-pick. Only
+  // once Firebase has nothing (no key yet, offline, or a fresh account) does
+  // this fall back to whatever chrome.storage.local already has.
   useEffect(() => {
-    chrome.storage.local.get(['spreadsheetId', 'spreadsheetName', 'sheetTabName'], (r) => {
-      if (typeof r.spreadsheetId === 'string') setSpreadsheetId(r.spreadsheetId);
-      if (typeof r.spreadsheetName === 'string') setSpreadsheetName(r.spreadsheetName);
-      if (typeof r.sheetTabName === 'string') setSheetTabName(r.sheetTabName);
-      loadedRef.current = true;
-      if (typeof r.spreadsheetId === 'string' && r.spreadsheetId) fetchTabsFor(r.spreadsheetId);
-    });
+    const loadFromLocal = () => {
+      chrome.storage.local.get(['spreadsheetId', 'spreadsheetName', 'sheetTabName'], (r) => {
+        if (typeof r.spreadsheetId === 'string') setSpreadsheetId(r.spreadsheetId);
+        if (typeof r.spreadsheetName === 'string') setSpreadsheetName(r.spreadsheetName);
+        if (typeof r.sheetTabName === 'string') setSheetTabName(r.sheetTabName);
+        loadedRef.current = true;
+        if (typeof r.spreadsheetId === 'string' && r.spreadsheetId) fetchTabsFor(r.spreadsheetId);
+      });
+    };
+
+    if (!key) {
+      loadFromLocal();
+    } else {
+      dbGet(ref(getDatabase(getFirebaseApp()), `accounts/${key}/leadSheet`))
+        .then((snap) => {
+          const shared = snap.val() as
+            | { spreadsheetId?: string; spreadsheetName?: string; sheetTabName?: string }
+            | null;
+          if (!shared?.spreadsheetId) {
+            loadFromLocal();
+            return;
+          }
+          const resolvedTabName = shared.sheetTabName ?? '';
+          chrome.storage.local.set({
+            spreadsheetId: shared.spreadsheetId,
+            spreadsheetName: shared.spreadsheetName ?? '',
+            sheetTabName: resolvedTabName,
+          });
+          setSpreadsheetId(shared.spreadsheetId);
+          setSpreadsheetName(shared.spreadsheetName ?? '');
+          setSheetTabName(resolvedTabName);
+          loadedRef.current = true;
+          fetchTabsFor(shared.spreadsheetId);
+        })
+        .catch((e) => {
+          console.warn('[Sheets] Firebase lookup failed (non-fatal):', e);
+          loadFromLocal();
+        });
+    }
 
     const onChanged = (
       changes: { [key: string]: chrome.storage.StorageChange },
@@ -140,11 +197,12 @@ export function useGoogleSheetsSettings() {
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
-  }, []);
+  }, [key]);
 
   useEffect(() => {
     if (!loadedRef.current) return;
     chrome.storage.local.set({ sheetTabName });
+    if (spreadsheetId) publishLeadSheet(spreadsheetId, spreadsheetName, sheetTabName);
   }, [sheetTabName]);
 
   // Gets an interactive OAuth token (drive.file scope, per manifest), opens
@@ -185,6 +243,7 @@ export function useGoogleSheetsSettings() {
           } else if (data?.type === 'PICKER_RESULT') {
             if (data.ok) {
               const isNewSheet = data.spreadsheetId !== spreadsheetId;
+              const nextTabName = isNewSheet ? '' : sheetTabName;
               chrome.storage.local.set({
                 spreadsheetId: data.spreadsheetId,
                 spreadsheetName: data.spreadsheetName,
@@ -193,6 +252,7 @@ export function useGoogleSheetsSettings() {
               setSpreadsheetId(data.spreadsheetId);
               setSpreadsheetName(data.spreadsheetName);
               if (isNewSheet) setSheetTabName('');
+              publishLeadSheet(data.spreadsheetId, data.spreadsheetName, nextTabName);
               fetchTabsFor(data.spreadsheetId);
               finish({ ok: true });
             } else {
@@ -216,6 +276,7 @@ export function useGoogleSheetsSettings() {
     setSpreadsheetId('');
     setSpreadsheetName('');
     setTabs([]);
+    if (key) dbSet(ref(getDatabase(getFirebaseApp()), `accounts/${key}/leadSheet`), null);
   };
 
   const refreshTabs = () => {
