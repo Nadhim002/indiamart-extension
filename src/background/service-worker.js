@@ -27,15 +27,6 @@ function setSession(values) {
   return new Promise((resolve) => chrome.storage.session.set(values, resolve));
 }
 
-// Route the toolbar click to the side panel. The manifest deliberately has no
-// action.default_popup — an action popup is torn down the moment it loses
-// focus, which killed the Google Picker handshake in useGoogleSheetsSettings
-// (window.open steals focus, the popup dies, PICKER_RESULT lands nowhere).
-// Note this call has no effect at all while default_popup is set.
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((e) => console.warn('[SidePanel] setPanelBehavior failed:', e));
-
 const INDIAMART_ORIGIN = 'https://seller.indiamart.com';
 
 // How often (in timer cycles) the alarm handler re-validates entitlement.
@@ -1378,12 +1369,42 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
       });
 
       const filteredLeads = window.__im_utils.filterLeads(mappedData, filters);
+      const passedIds = new Set(filteredLeads.map((l) => l.ETO_OFR_ID));
 
-      // Counts only, deliberately. This function is injected with
-      // world: 'MAIN', so everything logged here lands in IndiaMART's own page
-      // console, readable by any script on that page. Lead rows carry buyer
-      // names and mobile numbers — never log the rows themselves.
+      // One table for the whole pull, with the verdict as the leading column,
+      // rather than a second table containing only the survivors — the useful
+      // question is which of the leads you just saw passed, and why the rest
+      // didn't, and that only reads well side by side.
+      //
+      // This function is injected with world: 'MAIN', so anything logged here
+      // lands in IndiaMART's own page console where any script on that page
+      // can read it. These are lead/business fields only: buyer name and
+      // mobile number come from the purchase response, never from this list,
+      // and are deliberately not logged anywhere. GRID_PARAMETERS is omitted
+      // too — it's an opaque re-purchase token that shouldn't leave the
+      // machine (see leadHistoryPayload.ts).
       console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed`);
+      console.table(
+        mappedData.map((lead) => {
+          const passed = passedIds.has(lead.ETO_OFR_ID);
+          return {
+            Status: passed ? '✅ PASS' : '⛔ skip',
+            // Optional-called: a page still holding an older __im_utils would
+            // otherwise throw here and abort the whole cycle — no filtering,
+            // no purchases — just because a logging helper was missing.
+            // Diagnostics must never be able to take down the run.
+            Why: passed ? '' : (window.__im_utils.rejectionReason?.(lead, filters) ?? '—'),
+            ID: lead.ETO_OFR_ID,
+            Title: lead.ETO_OFR_TITLE,
+            'Price ₹': lead.ETO_OFR_APPROX_ORDER_VALUE,
+            Qty: lead.quantity,
+            'Age (m)': lead.BLDATETIME,
+            City: lead.GLUSR_CITY,
+            State: lead.GLUSR_STATE,
+            Cat: lead.FK_GLCAT_MCAT_ID,
+          };
+        })
+      );
 
       console.log(`[Purchase] Lead buying is ${enableLeadBuying ? 'enabled' : 'disabled'}`);
 
