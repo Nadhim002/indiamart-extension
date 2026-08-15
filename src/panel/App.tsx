@@ -23,6 +23,11 @@ function getGoogleAccessToken(): Promise<string> {
       redirect_uri: redirectUri,
       response_type: 'token',
       scope: 'openid email profile',
+      // Without this, Google silently continues with whatever account
+      // session is already active in this launchWebAuthFlow context —
+      // signOut() on the Firebase side doesn't affect that — so the account
+      // chooser never appears and you can't switch accounts after sign-out.
+      prompt: 'select_account',
     });
     chrome.identity.launchWebAuthFlow(
       { url: `https://accounts.google.com/o/oauth2/auth?${params}`, interactive: true },
