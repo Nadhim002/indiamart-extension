@@ -34,7 +34,7 @@ const REASON_MESSAGE: Record<string, string> = {
 };
 
 // Owns the live timer view: polls the service worker once a second for the
-// authoritative timer state and exposes start/stop/reset commands. The caller
+// authoritative timer state and exposes start/stop commands. The caller
 // supplies the START_TIMER payload (built from settings).
 export function useTimer() {
   const [timeLeft, setTimeLeft] = useState(0);
@@ -84,12 +84,5 @@ export function useTimer() {
     sendBackgroundCommand('STOP_TIMER');
   };
 
-  const reset = () => {
-    setIsRunning(false);
-    setTimeLeft(0);
-    setCycleCount(0);
-    sendBackgroundCommand('STOP_TIMER');
-  };
-
-  return { timeLeft, isRunning, cycleCount, activeUrl, nextFireTime, start, stop, reset };
+  return { timeLeft, isRunning, cycleCount, activeUrl, nextFireTime, start, stop };
 }

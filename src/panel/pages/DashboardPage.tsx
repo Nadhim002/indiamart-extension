@@ -177,7 +177,6 @@ export default function DashboardPage({
             isRunning={timer.isRunning}
             onStart={handleStart}
             onStop={timer.stop}
-            onReset={timer.reset}
           />
 
           <StatusFooter

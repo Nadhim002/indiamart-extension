@@ -19,7 +19,6 @@ interface TimerControlsProps {
   isRunning: boolean;
   onStart: () => void;
   onStop: () => void;
-  onReset: () => void;
 }
 
 export default function TimerControls({
@@ -39,7 +38,6 @@ export default function TimerControls({
   isRunning,
   onStart,
   onStop,
-  onReset,
 }: TimerControlsProps) {
   // Blank = unlimited. Once the user has a value, the stepper clamps it to
   // >= 1; the text field can still be cleared by hand to go back to unlimited.
@@ -178,9 +176,6 @@ export default function TimerControls({
         </Button>
         <Button variant="destructive" onClick={onStop} disabled={!isRunning}>
           Stop
-        </Button>
-        <Button variant="ghost" className="col-span-2" onClick={onReset}>
-          Reset
         </Button>
       </div>
     </section>
