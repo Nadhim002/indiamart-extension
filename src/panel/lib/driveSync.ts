@@ -13,6 +13,7 @@ const FALLBACK_STATE: DriveSyncState = {
   unsyncedCount: null,
   historySpreadsheetId: null,
   historySpreadsheetUrl: null,
+  historySpreadsheetName: null,
   error: 'message-failed',
 };
 
@@ -46,11 +47,77 @@ export function syncToDrive(): Promise<SyncToDriveResult> {
   });
 }
 
+export interface HistorySheetResult {
+  ok: boolean;
+  reason?: string;
+  error?: string;
+  spreadsheetName?: string;
+  // True when the picked sheet already had a header row that doesn't match
+  // LEAD_HISTORY_HEADER_ROW. Non-blocking, like the lead-bought sheet's
+  // mismatch warning — the worker never overwrites an existing header.
+  headerMismatch?: boolean;
+  // False when the pointer couldn't be written to Firebase, which means other
+  // computers will not converge onto this sheet.
+  published?: boolean;
+}
+
+// Points Drive Sync at an existing spreadsheet the user picked.
+export function setHistorySheet(spreadsheetId: string): Promise<HistorySheetResult> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: 'SET_HISTORY_SHEET', spreadsheetId },
+      (res: HistorySheetResult | undefined) => {
+        if (chrome.runtime.lastError || !res) {
+          resolve({ ok: false, reason: 'message-failed' });
+          return;
+        }
+        resolve(res);
+      }
+    );
+  });
+}
+
+// Creates a brand-new history sheet, replacing whatever is current. Also the
+// recovery path when the existing sheet became unreachable.
+export function createHistorySheet(): Promise<HistorySheetResult> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: 'CREATE_HISTORY_SHEET' },
+      (res: HistorySheetResult | undefined) => {
+        if (chrome.runtime.lastError || !res) {
+          resolve({ ok: false, reason: 'message-failed' });
+          return;
+        }
+        resolve(res);
+      }
+    );
+  });
+}
+
 const REASON_MESSAGE: Record<string, string> = {
   'not-connected': 'Not connected — choose a Google Sheet above first.',
   'already-syncing': 'A sync is already running.',
   'message-failed': "Couldn't reach the extension — try again.",
+  'not-found': 'That spreadsheet no longer exists.',
 };
+
+export function describeHistorySheetResult(result: HistorySheetResult): {
+  ok: boolean;
+  text: string;
+} {
+  if (!result.ok) {
+    const reason = result.reason ?? 'failed';
+    return { ok: false, text: REASON_MESSAGE[reason] ?? `Failed: ${result.error ?? reason}` };
+  }
+  const parts = [`Now logging to ${result.spreadsheetName ?? 'the selected sheet'}.`];
+  if (result.headerMismatch) {
+    parts.push('Its header row doesn’t match — new rows may land misaligned.');
+  }
+  if (result.published === false) {
+    parts.push('Couldn’t sync this choice to your other computers.');
+  }
+  return { ok: true, text: parts.join(' ') };
+}
 
 // Turns a SYNC_TO_DRIVE response into UI-ready feedback for the button that
 // triggered it — separate from DriveSyncState, which is the ambient

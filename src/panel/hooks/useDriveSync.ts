@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DriveSyncState } from '@/types';
-import { getDriveSyncState, syncToDrive, type SyncToDriveResult } from '@/lib/driveSync';
+import {
+  getDriveSyncState,
+  syncToDrive,
+  setHistorySheet,
+  createHistorySheet,
+  type SyncToDriveResult,
+  type HistorySheetResult,
+} from '@/lib/driveSync';
+import { openSheetPicker } from '@/lib/picker';
 
 const INITIAL_STATE: DriveSyncState = {
   status: 'idle',
@@ -8,6 +16,7 @@ const INITIAL_STATE: DriveSyncState = {
   unsyncedCount: null,
   historySpreadsheetId: null,
   historySpreadsheetUrl: null,
+  historySpreadsheetName: null,
   error: null,
 };
 
@@ -37,7 +46,12 @@ export function useDriveSync() {
       area: string
     ) => {
       if (area !== 'local') return;
-      if (changes.lastDriveSyncAt || changes.historySpreadsheetId || changes.historySpreadsheetUrl) {
+      if (
+        changes.lastDriveSyncAt ||
+        changes.historySpreadsheetId ||
+        changes.historySpreadsheetUrl ||
+        changes.historySpreadsheetName
+      ) {
         refresh();
       }
     };
@@ -76,5 +90,35 @@ export function useDriveSync() {
     }
   };
 
-  return { ...state, busy, lastResult, sync };
+  // Opens the shared picker, then hands the chosen id to the worker, which
+  // owns validation, the header row, publishing the shared pointer and
+  // resetting the sync markers. Returns null when the user cancels, so the
+  // caller can stay silent rather than reporting a non-error.
+  const pickHistorySheet = async (): Promise<HistorySheetResult | null> => {
+    setBusy(true);
+    try {
+      const picked = await openSheetPicker();
+      if (!picked.ok) {
+        return picked.reason === 'cancelled'
+          ? null
+          : { ok: false, reason: picked.reason ?? 'failed' };
+      }
+      return await setHistorySheet(picked.spreadsheetId);
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+
+  const createNewHistorySheet = async (): Promise<HistorySheetResult> => {
+    setBusy(true);
+    try {
+      return await createHistorySheet();
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+
+  return { ...state, busy, lastResult, sync, pickHistorySheet, createNewHistorySheet };
 }

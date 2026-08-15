@@ -69,6 +69,9 @@ export interface DriveSyncState {
   unsyncedCount: number | null;
   historySpreadsheetId: string | null;
   historySpreadsheetUrl: string | null;
+  // Null until the first sync creates the sheet — "not connected yet" is a
+  // normal state, not an error, and the panel says so explicitly.
+  historySpreadsheetName: string | null;
   error: string | null;
 }
 

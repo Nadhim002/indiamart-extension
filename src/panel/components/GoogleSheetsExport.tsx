@@ -5,25 +5,8 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useGoogleSheetsSettings } from '@/hooks/useGoogleSheetsSettings';
+import { describePickFailure } from '@/lib/picker';
 import { SHEET_HEADER_ROW } from '@shared/sheetsPayload';
-
-// pickSheet resolves internal reason codes; without a map the panel printed
-// them raw, so closing the picker showed the literal word "cancelled". Same
-// shape as driveSync.ts's REASON_MESSAGE and useTimer.ts's.
-const REASON_MESSAGE: Record<string, string> = {
-  'No token granted': 'Google didn’t grant access — try again.',
-  'Popup blocked — allow popups for this extension':
-    'Popup blocked — allow popups for this extension.',
-};
-
-// Cancelling is a deliberate user action, not an error — it gets no message.
-const SILENT_REASONS = new Set(['cancelled']);
-
-function describePickFailure(reason: string | undefined): string | null {
-  if (!reason) return 'Pick failed.';
-  if (SILENT_REASONS.has(reason)) return null;
-  return REASON_MESSAGE[reason] ?? reason;
-}
 
 export default function GoogleSheetsExport({ googleUser }: { googleUser: User }) {
   const {

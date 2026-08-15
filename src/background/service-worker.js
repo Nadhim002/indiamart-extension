@@ -596,13 +596,97 @@ function getOrCreateInstallId() {
 // computer checks here before ever considering creating its own. Without
 // this, each computer would create its own separate spreadsheet the first
 // time it synced, defeating the point of a shared history sheet entirely.
-async function getSharedHistorySpreadsheetId() {
+// The worker used to borrow googleIdToken from chrome.storage.local, but the
+// only writer of that key is the panel's onIdTokenChanged — which stops the
+// moment the panel closes. Firebase ID tokens last an hour while Drive Sync
+// runs on a 24h alarm, so background RTDB calls almost always carried a dead
+// token: reads 401'd, returned null, and a second computer concluded no shared
+// history sheet existed and created its own.
+//
+// Mint one here instead. chrome.identity already yields a Google access token
+// carrying openid/email/profile (manifest oauth2.scopes), and Firebase will
+// exchange that for an ID token — so the worker no longer depends on the panel
+// ever having been open.
+let firebaseCredsCache = null; // { idToken, email, expiresAt }
+
+async function getFirebaseCreds({ forceRefresh = false } = {}) {
+  const now = Date.now();
+  if (!forceRefresh && firebaseCredsCache && firebaseCredsCache.expiresAt > now) {
+    return firebaseCredsCache;
+  }
+
+  const accessToken = await getSheetsAccessToken();
+  if (accessToken) {
+    try {
+      const res = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${FIREBASE_CONFIG.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            postBody: `access_token=${accessToken}&providerId=google.com`,
+            requestUri: `https://${FIREBASE_CONFIG.authDomain}`,
+            returnSecureToken: true,
+          }),
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.idToken && data.email) {
+          firebaseCredsCache = {
+            idToken: data.idToken,
+            email: data.email,
+            // Expire two minutes early so a slow call can't straddle the edge.
+            expiresAt: now + (Number(data.expiresIn) || 3600) * 1000 - 120_000,
+          };
+          // Mirror to storage: entitlement, push and the seat check still read
+          // these keys directly, and they were going stale for the same reason.
+          await setLocal({
+            googleIdToken: data.idToken,
+            googleEmail: data.email,
+            sanitizedEmail: sanitizeEmail(data.email),
+          });
+          return firebaseCredsCache;
+        }
+      } else {
+        console.warn('[Auth] Firebase token exchange failed:', res.status);
+      }
+    } catch (e) {
+      console.warn('[Auth] Firebase token exchange threw:', e);
+    }
+  }
+
+  // Fall back to whatever the panel last stored — no worse than before.
   const { googleEmail, googleIdToken } = await getLocal(['googleEmail', 'googleIdToken']);
   if (!googleEmail || !googleIdToken) return null;
+  return { idToken: googleIdToken, email: googleEmail, expiresAt: 0 };
+}
+
+// RTDB REST call under accounts/{email}/, re-minting the token once on 401.
+// Returns the Response so callers can distinguish "denied" from "absent" —
+// conflating those is what made every failure look like "no sheet yet".
+async function rtdbFetch(path, init) {
+  let creds = await getFirebaseCreds();
+  if (!creds) return null;
+  const url = (c) =>
+    `${FIREBASE_CONFIG.databaseURL}/accounts/${sanitizeEmail(c.email)}/${path}.json?auth=${c.idToken}`;
+  let res = await fetch(url(creds), init);
+  if (res.status === 401) {
+    creds = await getFirebaseCreds({ forceRefresh: true });
+    if (!creds) return null;
+    res = await fetch(url(creds), init);
+  }
+  return res;
+}
+
+async function getSharedHistorySpreadsheetId() {
   try {
-    const key = sanitizeEmail(googleEmail);
-    const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/accounts/${key}/driveSync.json?auth=${googleIdToken}`);
-    if (!res.ok) return null;
+    const res = await rtdbFetch('driveSync');
+    if (!res) return null;
+    if (!res.ok) {
+      console.warn('[DriveSync] Shared pointer read failed:', res.status);
+      return null;
+    }
     const data = await res.json();
     return data?.historySpreadsheetId ? data : null;
   } catch (e) {
@@ -611,18 +695,29 @@ async function getSharedHistorySpreadsheetId() {
   }
 }
 
+// Returns whether the pointer actually reached the database. This used to
+// ignore the response entirely, so a rules rejection or an expired token was
+// indistinguishable from success — the caller believed every other computer
+// would converge while nothing had been written at all.
 async function publishSharedHistorySpreadsheetId(id, url) {
-  const { googleEmail, googleIdToken } = await getLocal(['googleEmail', 'googleIdToken']);
-  if (!googleEmail || !googleIdToken) return;
   try {
-    const key = sanitizeEmail(googleEmail);
-    await fetch(`${FIREBASE_CONFIG.databaseURL}/accounts/${key}/driveSync.json?auth=${googleIdToken}`, {
+    const res = await rtdbFetch('driveSync', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ historySpreadsheetId: id, historySpreadsheetUrl: url }),
     });
+    if (!res || !res.ok) {
+      console.error(
+        '[DriveSync] Could not publish the shared history sheet:',
+        res ? res.status : 'no credentials',
+        '— other computers will keep creating their own until this succeeds.'
+      );
+      return false;
+    }
+    return true;
   } catch (e) {
-    console.warn('[DriveSync] Firebase publish failed (non-fatal):', e);
+    console.error('[DriveSync] Firebase publish threw:', e);
+    return false;
   }
 }
 
@@ -632,12 +727,13 @@ async function publishSharedHistorySpreadsheetId(id, url) {
 // picked a different sheet more recently. Same shared-pointer rationale as
 // getSharedHistorySpreadsheetId above, just for a different node.
 async function getSharedLeadSheet() {
-  const { googleEmail, googleIdToken } = await getLocal(['googleEmail', 'googleIdToken']);
-  if (!googleEmail || !googleIdToken) return null;
   try {
-    const key = sanitizeEmail(googleEmail);
-    const res = await fetch(`${FIREBASE_CONFIG.databaseURL}/accounts/${key}/leadSheet.json?auth=${googleIdToken}`);
-    if (!res.ok) return null;
+    const res = await rtdbFetch('leadSheet');
+    if (!res) return null;
+    if (!res.ok) {
+      console.warn('[Sheets] Shared pointer read failed:', res.status);
+      return null;
+    }
     const data = await res.json();
     return data?.spreadsheetId ? data : null;
   } catch (e) {
@@ -752,7 +848,11 @@ async function createHistorySpreadsheet(token) {
   }
 
   const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
-  await setLocal({ historySpreadsheetId: spreadsheetId, historySpreadsheetUrl: url });
+  await setLocal({
+    historySpreadsheetId: spreadsheetId,
+    historySpreadsheetUrl: url,
+    historySpreadsheetName: 'IndiaMART Lead History',
+  });
   // Publish immediately so any other computer on this account converges onto
   // this spreadsheet instead of creating its own — see
   // getSharedHistorySpreadsheetId's comment for why this has to go through
@@ -775,13 +875,20 @@ async function ensureHistorySpreadsheet(token) {
 
   const shared = await getSharedHistorySpreadsheetId();
   let historySpreadsheetId = shared?.historySpreadsheetId;
+  // Remember whether the id came from the shared node or only from this
+  // device. A sheet created before the pointer could be written (rules, or an
+  // expired token) lives only in local storage, and without republishing it
+  // every other computer would go on creating its own forever.
+  const fromShared = Boolean(historySpreadsheetId);
   if (!historySpreadsheetId) {
     ({ historySpreadsheetId } = await getLocal(['historySpreadsheetId']));
   }
 
   if (historySpreadsheetId) {
     const metaRes = await fetch(
-      `${SHEETS_API_BASE}/${historySpreadsheetId}?fields=sheets.properties(sheetId,title)`,
+      // properties.title comes along for free here, which is also what keeps
+      // the displayed name current if the user renames the file in Drive.
+      `${SHEETS_API_BASE}/${historySpreadsheetId}?fields=properties.title,sheets.properties(sheetId,title)`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (metaRes.status === 404) {
@@ -798,10 +905,18 @@ async function ensureHistorySpreadsheet(token) {
       // Keep this device's own local copy in step with whichever spreadsheet
       // is actually canonical, even when it was another computer that
       // created it — this is what the panel's "open sheet" link reads.
+      const historyUrl = `https://docs.google.com/spreadsheets/d/${historySpreadsheetId}/edit`;
       await setLocal({
         historySpreadsheetId,
-        historySpreadsheetUrl: `https://docs.google.com/spreadsheets/d/${historySpreadsheetId}/edit`,
+        historySpreadsheetUrl: historyUrl,
+        historySpreadsheetName: meta.properties?.title ?? 'IndiaMART Lead History',
       });
+      // Self-heal: this id was only ever local, so seed the shared node with
+      // it now that the write can succeed. Whichever computer syncs first
+      // wins, and the rest converge onto it on their next sync.
+      if (!fromShared) {
+        await publishSharedHistorySpreadsheetId(historySpreadsheetId, historyUrl);
+      }
       return historySpreadsheetCache;
     }
   }
@@ -856,6 +971,112 @@ function markLeadsSynced(records, syncedAt) {
         tx.onerror = (e) => reject(e.target.error);
       })
   );
+}
+
+// Clears every syncedAt marker so the next sync re-sends the full history.
+// The markers are per-lead, not per-destination, so when the history sheet
+// changes a new sheet would otherwise silently start mid-history — the user
+// would be left holding two partial logs with no indication why.
+function resetSyncMarkers() {
+  return openLeadsDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.openCursor();
+        req.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (!cursor) return;
+          const record = cursor.value;
+          if (record.syncedAt !== 0) {
+            record.syncedAt = 0;
+            cursor.update(record);
+          }
+          cursor.continue();
+        };
+        // Resolve on transaction completion, not cursor exhaustion, so the
+        // queued cursor.update writes are actually flushed first.
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+      })
+  );
+}
+
+// Points Drive Sync at a spreadsheet the user picked, and makes it canonical
+// for every computer on the account.
+//
+// The header row is only written when the target's first row is empty. An
+// existing sheet with its own headers is left alone and reported back as a
+// mismatch so the panel can warn — the same non-blocking treatment the
+// lead-bought sheet gives, since silently overwriting a user's header row
+// would be worse than a misaligned append they can see and fix.
+async function adoptHistorySpreadsheet(spreadsheetId) {
+  const token = await getSheetsAccessToken();
+  if (!token) return { ok: false, reason: 'not-connected' };
+
+  const metaRes = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}?fields=properties.title,sheets.properties(sheetId,title)`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (metaRes.status === 404) return { ok: false, reason: 'not-found' };
+  assertOk(metaRes, 'History sheet metadata fetch failed', token);
+  const meta = await metaRes.json();
+  const sheet = (meta.sheets || [])[0];
+  const sheetId = sheet?.properties?.sheetId ?? 0;
+  const tabName = sheet?.properties?.title ?? 'Sheet1';
+
+  const lastCol = String.fromCharCode(65 + LEAD_HISTORY_HEADER_ROW.length - 1);
+  const range = `${tabName}!A1:${lastCol}1`;
+  const headRes = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  assertOk(headRes, 'History header check failed', token);
+  const head = await headRes.json();
+  const existing = head.values?.[0];
+
+  let headerMismatch = false;
+  if (!existing || existing.length === 0) {
+    const writeRes = await fetch(
+      `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [LEAD_HISTORY_HEADER_ROW] }),
+      }
+    );
+    assertOk(writeRes, 'History header write failed', token);
+  } else {
+    headerMismatch = LEAD_HISTORY_HEADER_ROW.some((h, i) => existing[i] !== h);
+  }
+
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  const spreadsheetName = meta.properties?.title ?? 'Untitled spreadsheet';
+  historySpreadsheetCache = { id: spreadsheetId, sheetId, tabName };
+  await setLocal({
+    historySpreadsheetId: spreadsheetId,
+    historySpreadsheetUrl: url,
+    historySpreadsheetName: spreadsheetName,
+  });
+  const published = await publishSharedHistorySpreadsheetId(spreadsheetId, url);
+  await resetSyncMarkers();
+
+  return { ok: true, spreadsheetName, headerMismatch, published };
+}
+
+// Deliberately creates a brand-new history sheet, replacing whatever is
+// current. This is the "start fresh" / recovery path — it is the only way out
+// when the existing sheet became unreachable (access revoked returns 403, not
+// the 404 that ensureHistorySpreadsheet auto-recovers from).
+async function createFreshHistorySpreadsheet() {
+  const token = await getSheetsAccessToken();
+  if (!token) return { ok: false, reason: 'not-connected' };
+
+  historySpreadsheetCache = null;
+  const sheet = await createHistorySpreadsheet(token);
+  historySpreadsheetCache = sheet;
+  await resetSyncMarkers();
+  return { ok: true, spreadsheetName: 'IndiaMART Lead History' };
 }
 
 function getUnsyncedCount() {
@@ -953,7 +1174,13 @@ async function getDriveSyncState() {
     lastDriveSyncAt = null,
     historySpreadsheetId = null,
     historySpreadsheetUrl = null,
-  } = await getLocal(['lastDriveSyncAt', 'historySpreadsheetId', 'historySpreadsheetUrl']);
+    historySpreadsheetName = null,
+  } = await getLocal([
+    'lastDriveSyncAt',
+    'historySpreadsheetId',
+    'historySpreadsheetUrl',
+    'historySpreadsheetName',
+  ]);
   const unsyncedCount = await getUnsyncedCount().catch(() => null);
   return {
     status: driveSyncInFlight ? 'syncing' : driveSyncLastError ? 'error' : 'idle',
@@ -961,6 +1188,7 @@ async function getDriveSyncState() {
     unsyncedCount,
     historySpreadsheetId,
     historySpreadsheetUrl,
+    historySpreadsheetName,
     error: driveSyncLastError,
   };
 }
@@ -1084,6 +1312,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((e) => {
         console.error('[DriveSync] manual sync failed:', e);
         sendResponse({ ok: false, reason: 'failed', error: e instanceof Error ? e.message : String(e) });
+      });
+    return true; // async sendResponse
+  }
+
+  // Both history-sheet changes reset every syncedAt marker, so they must not
+  // race a sync that is midway through marking a chunk against the *old*
+  // sheet — that would strand those rows as "synced" to a sheet no longer in
+  // use, the exact partial-history gap the reset exists to prevent.
+  if (message.type === 'SET_HISTORY_SHEET' || message.type === 'CREATE_HISTORY_SHEET') {
+    if (driveSyncInFlight) {
+      sendResponse({ ok: false, reason: 'already-syncing' });
+      return true;
+    }
+    const run =
+      message.type === 'CREATE_HISTORY_SHEET'
+        ? createFreshHistorySpreadsheet()
+        : adoptHistorySpreadsheet(message.spreadsheetId);
+    run
+      .then((res) => sendResponse(res))
+      .catch((e) => {
+        console.error('[DriveSync] history sheet change failed:', e);
+        sendResponse({
+          ok: false,
+          reason: 'failed',
+          error: e instanceof Error ? e.message : String(e),
+        });
       });
     return true; // async sendResponse
   }
