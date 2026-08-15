@@ -93,7 +93,6 @@ export default function MyDevices({
         <DeviceList devices={phones} onRename={onRename} onRemove={onRemove} />
       </div>
 
-      {phones.length > 0 && (
         <div className="space-y-2">
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" disabled={busy} onClick={() => runTest()}>
@@ -110,7 +109,6 @@ export default function MyDevices({
           </div>
           {status && <p className="text-xs text-muted-foreground" role="status">{status}</p>}
         </div>
-      )}
 
       <Separator />
 
