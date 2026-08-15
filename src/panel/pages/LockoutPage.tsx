@@ -37,6 +37,17 @@ export default function LockoutPage({ reason, email, onSignOut }: LockoutPagePro
           <p className="text-sm leading-relaxed text-muted-foreground">{copy.body}</p>
         </div>
 
+        {/* The signed-in account is always this Chrome profile's Google account
+            — there is no account chooser. Someone who subscribed under a
+            different address lands here with no way to tell why, so name the
+            fix explicitly. */}
+        {reason === 'no-account' && (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            This is your Chrome profile’s Google account. If you subscribed with a
+            different address, switch Chrome profile and sign in again.
+          </p>
+        )}
+
         <div className="w-full space-y-1 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
           {email && <p className="truncate">Signed in as {email}</p>}
           <p>

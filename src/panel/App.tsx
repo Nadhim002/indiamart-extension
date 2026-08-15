@@ -12,35 +12,43 @@ import { sanitizeEmail } from '@shared/email';
 
 forceWebSockets();
 
-const GOOGLE_OAUTH_CLIENT_ID =
-  '797004741619-lko4nhlrpj19f5utno4f8721gfeheqto.apps.googleusercontent.com';
-
+// Sign-in deliberately uses chrome.identity.getAuthToken — the same call the
+// Sheets/Drive code paths use — rather than launchWebAuthFlow with an account
+// chooser. getAuthToken can only ever mint a token for the Chrome profile's
+// signed-in account, so a chooser here produced two unrelated Google
+// identities: the app was "logged in" as whoever the user picked, while every
+// drive.file grant (and the Picker's account) belonged to the Chrome profile.
+// The sheet pointer was then filed under one email while the grant lived on
+// another, which is why a sheet picked on one computer 403'd on the next.
+//
+// Consequence, by design: the account is the Chrome profile's. To use a
+// different Google account, the user switches Chrome profile.
+//
+// The manifest's oauth2.scopes carry openid/email/profile alongside
+// drive.file, so this one token satisfies both Firebase sign-in and the Sheets
+// API. It also means consent is granted at login — every other call site uses
+// { interactive: false }, so without this a second computer that auto-adopts a
+// shared sheet would never obtain a grant and would fail silently forever.
 function getGoogleAccessToken(): Promise<string> {
   return new Promise((resolve, reject) => {
-    const redirectUri = chrome.identity.getRedirectURL();
-    const params = new URLSearchParams({
-      client_id: GOOGLE_OAUTH_CLIENT_ID,
-      redirect_uri: redirectUri,
-      response_type: 'token',
-      scope: 'openid email profile',
-      // Without this, Google silently continues with whatever account
-      // session is already active in this launchWebAuthFlow context —
-      // signOut() on the Firebase side doesn't affect that — so the account
-      // chooser never appears and you can't switch accounts after sign-out.
-      prompt: 'select_account',
-    });
-    chrome.identity.launchWebAuthFlow(
-      { url: `https://accounts.google.com/o/oauth2/auth?${params}`, interactive: true },
-      (responseUrl) => {
-        if (chrome.runtime.lastError || !responseUrl) {
-          reject(new Error(chrome.runtime.lastError?.message ?? 'Auth cancelled'));
-          return;
-        }
-        const hash = new URLSearchParams(new URL(responseUrl).hash.slice(1));
-        const token = hash.get('access_token');
-        token ? resolve(token) : reject(new Error('No access token in response'));
+    chrome.identity.getAuthToken({ interactive: true }, (result) => {
+      // @types/chrome declares this callback as GetAuthTokenResult, but Chrome
+      // still hands back a bare token string — which is what every other
+      // getAuthToken call site here depends on. Accept either shape rather
+      // than betting on one.
+      const raw = result as unknown as string | { token?: string } | undefined;
+      const token = typeof raw === 'string' ? raw : raw?.token;
+      if (chrome.runtime.lastError || !token) {
+        reject(
+          new Error(
+            chrome.runtime.lastError?.message ??
+              'No Google account in this Chrome profile — sign in to Chrome first.'
+          )
+        );
+        return;
       }
-    );
+      resolve(token);
+    });
   });
 }
 
@@ -122,6 +130,11 @@ export default function App() {
   const handleSignOut = async () => {
     const app = getFirebaseApp();
     const auth = getAuth(app);
+    // Chrome caches the getAuthToken result per profile+client+scopes. Without
+    // dropping it, the next sign-in silently reuses a stale token instead of
+    // re-minting one — and a token revoked in the Google account settings
+    // would keep being handed out until it expired.
+    await new Promise<void>((resolve) => chrome.identity.clearAllCachedAuthTokens(() => resolve()));
     await signOut(auth);
   };
 

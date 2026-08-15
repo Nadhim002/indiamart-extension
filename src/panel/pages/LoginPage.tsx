@@ -21,6 +21,10 @@ export default function LoginPage({ onSignIn, signingIn, signInError }: LoginPag
           <p className="text-sm leading-relaxed text-muted-foreground">
             Sign in to receive lead alerts on your phone.
           </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Uses the Google account this Chrome profile is signed in to. To use a
+            different account, switch Chrome profile.
+          </p>
         </div>
 
         <Button className="w-full" onClick={onSignIn} disabled={signingIn}>

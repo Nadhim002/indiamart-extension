@@ -23,6 +23,15 @@ function setSession(values) {
   return new Promise((resolve) => chrome.storage.session.set(values, resolve));
 }
 
+// Route the toolbar click to the side panel. The manifest deliberately has no
+// action.default_popup — an action popup is torn down the moment it loses
+// focus, which killed the Google Picker handshake in useGoogleSheetsSettings
+// (window.open steals focus, the popup dies, PICKER_RESULT lands nowhere).
+// Note this call has no effect at all while default_popup is set.
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((e) => console.warn('[SidePanel] setPanelBehavior failed:', e));
+
 const INDIAMART_ORIGIN = 'https://seller.indiamart.com';
 
 // How often (in timer cycles) the alarm handler re-validates entitlement.
@@ -645,15 +654,19 @@ async function resolveLeadSheet() {
   const shared = await getSharedLeadSheet();
   if (shared?.spreadsheetId) {
     const local = await getLocal(['spreadsheetId', 'spreadsheetName', 'sheetTabName']);
+    // RTDB omits keys whose value is null, so a node written before
+    // spreadsheetName existed comes back without it — coerce both optional
+    // fields rather than writing undefined into chrome.storage.local.
     const sharedTabName = shared.sheetTabName ?? '';
+    const sharedName = shared.spreadsheetName ?? '';
     if (
       shared.spreadsheetId !== local.spreadsheetId ||
-      shared.spreadsheetName !== local.spreadsheetName ||
+      sharedName !== local.spreadsheetName ||
       sharedTabName !== local.sheetTabName
     ) {
       await setLocal({
         spreadsheetId: shared.spreadsheetId,
-        spreadsheetName: shared.spreadsheetName,
+        spreadsheetName: sharedName,
         sheetTabName: sharedTabName,
       });
     }
@@ -1221,11 +1234,13 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
         };
       });
 
-      console.table(mappedData)
-
       const filteredLeads = window.__im_utils.filterLeads(mappedData, filters);
-      console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed:`, JSON.stringify(filteredLeads, null, 2));
-      console.table(filteredLeads);
+
+      // Counts only, deliberately. This function is injected with
+      // world: 'MAIN', so everything logged here lands in IndiaMART's own page
+      // console, readable by any script on that page. Lead rows carry buyer
+      // names and mobile numbers — never log the rows themselves.
+      console.log(`[Filter] ${filteredLeads.length} / ${mappedData.length} leads passed`);
 
       console.log(`[Purchase] Lead buying is ${enableLeadBuying ? 'enabled' : 'disabled'}`);
 
@@ -1296,15 +1311,17 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
 
         const purchaseData = purchaseResults.map((outcome, i) => {
           if (outcome.status === 'fulfilled') {
-            console.log(`[Purchase] ${outcome.value.lead.ETO_OFR_ID} - ${outcome.value.lead.ETO_OFR_TITLE}`, outcome.value.data);
+            // Status only — the response body holds the buyer's name and
+            // mobile number, and this console belongs to IndiaMART's page.
+            console.log(
+              `[Purchase] ${outcome.value.lead.ETO_OFR_ID} → ${outcome.value.data?.Status ?? 'no-status'}`
+            );
             return outcome.value;
           } else {
             console.error(`[Purchase] Failed for ${leadsToBuy[i].ETO_OFR_ID}:`, outcome.reason);
             return { lead: leadsToBuy[i], data: null, error: outcome.reason?.message };
           }
         });
-
-        console.table(purchaseData.map(({ lead, data }) => ({ ofrid: lead.ETO_OFR_ID, title: lead.ETO_OFR_TITLE, response: JSON.stringify(data) })));
 
         // Extract buyer contact info from purchase response to pass back to service worker
         purchaseDetails = purchaseData
@@ -1335,11 +1352,9 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
           });
       }
 
-      console.table({
-        result,
-        time: new Date().toLocaleString(),
-        state: document.visibilityState
-      });
+      // `result` is the seller's glusrid — identifying, and this console is
+      // IndiaMART's. Log the cycle heartbeat without it.
+      console.log(`[Cycle] ${new Date().toLocaleString()} · ${document.visibilityState}`);
 
       return {
         mappedData,
