@@ -67,11 +67,9 @@ export interface DriveSyncState {
   status: DriveSyncStatus;
   lastDriveSyncAt: number | null;
   unsyncedCount: number | null;
-  historySpreadsheetId: string | null;
-  historySpreadsheetUrl: string | null;
-  // Null until the first sync creates the sheet — "not connected yet" is a
-  // normal state, not an error, and the panel says so explicitly.
-  historySpreadsheetName: string | null;
+  // Deliberately carries no sheet pointer. Which spreadsheet the history goes
+  // to is owned by useHistorySheetSettings, which subscribes to RTDB directly
+  // — this state is only about when the sync ran and how it went.
   error: string | null;
 }
 

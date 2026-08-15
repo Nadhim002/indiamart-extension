@@ -34,3 +34,7 @@ only the public half (already in the manifest) is required for Chrome to derive 
 Do **not** regenerate this key casually; doing so changes the ID and breaks every dev
 machine's existing `drive.file` grants until the "Local Setup" client's Item ID (and
 this doc) are updated to match.
+
+
+`open -na "Google Chrome" --args --user-data-dir="$HOME/chrome-computer-b"`
+use this open secondary chrome

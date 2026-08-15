@@ -96,6 +96,7 @@ export function openSheetPicker(): Promise<PickResult> {
 // is what used to surface the literal word "cancelled" to users.
 const REASON_MESSAGE: Record<string, string> = {
   'popup-blocked': 'Popup blocked — allow popups for this extension.',
+  'no-token': 'Google didn’t grant access — try again.',
   'No token granted': 'Google didn’t grant access — try again.',
 };
 

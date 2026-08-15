@@ -5,7 +5,11 @@ import { rejectionReason } from '@shared/leadPolicy';
 import { sanitizeEmail } from '@shared/email';
 import { getEntitlement } from '@shared/entitlement';
 import { SHEET_HEADER_ROW, buildSheetRow, headerMatchesExpected } from '@shared/sheetsPayload';
-import { LEAD_HISTORY_HEADER_ROW, buildLeadHistoryRow } from '@shared/leadHistoryPayload';
+import {
+  LEAD_HISTORY_HEADER_ROW,
+  buildLeadHistoryRow,
+  historyHeaderMatches,
+} from '@shared/leadHistoryPayload';
 
 function getLocal(keys) {
   return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
@@ -679,72 +683,76 @@ async function rtdbFetch(path, init) {
   return res;
 }
 
-async function getSharedHistorySpreadsheetId() {
+// Both sheet pointers are owned by the panel, which writes them with the
+// Firebase SDK (useGoogleSheetsSettings / useHistorySheetSettings). The worker
+// only ever reads them, and never creates a spreadsheet: it used to create the
+// history sheet whenever it couldn't resolve one, which made a denied read
+// indistinguishable from "no sheet configured" and produced a duplicate
+// spreadsheet per computer.
+async function getSharedSheetPointer(node, label) {
   try {
-    const res = await rtdbFetch('driveSync');
+    const res = await rtdbFetch(node);
     if (!res) return null;
     if (!res.ok) {
-      console.warn('[DriveSync] Shared pointer read failed:', res.status);
+      console.warn(`[${label}] Shared pointer read failed:`, res.status);
       return null;
     }
     const data = await res.json();
-    return data?.historySpreadsheetId ? data : null;
+    return data?.spreadsheetId ? data : null;
   } catch (e) {
-    console.warn('[DriveSync] Firebase lookup failed (non-fatal):', e);
+    console.warn(`[${label}] Firebase lookup failed (non-fatal):`, e);
     return null;
   }
 }
 
-// Returns whether the pointer actually reached the database. This used to
-// ignore the response entirely, so a rules rejection or an expired token was
-// indistinguishable from success — the caller believed every other computer
-// would converge while nothing had been written at all.
-async function publishSharedHistorySpreadsheetId(id, url) {
-  try {
-    const res = await rtdbFetch('driveSync', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ historySpreadsheetId: id, historySpreadsheetUrl: url }),
-    });
-    if (!res || !res.ok) {
-      console.error(
-        '[DriveSync] Could not publish the shared history sheet:',
-        res ? res.status : 'no credentials',
-        '— other computers will keep creating their own until this succeeds.'
-      );
-      return false;
+// Resolves the history sheet to append to, preferring the Firebase-shared
+// pointer over this device's copy and keeping the local copy in step so the
+// panel doesn't lag behind a choice made on another computer. Returns null
+// when nothing is configured — the caller must not invent a sheet.
+async function resolveHistorySheet() {
+  const shared = await getSharedSheetPointer('driveSync', 'History');
+  if (shared?.spreadsheetId) {
+    const local = await getLocal([
+      'historySpreadsheetId',
+      'historySpreadsheetName',
+      'historySheetTabName',
+    ]);
+    // RTDB omits null-valued keys, so an older node may lack either field.
+    const name = shared.spreadsheetName ?? '';
+    const tabName = shared.sheetTabName ?? '';
+    if (
+      shared.spreadsheetId !== local.historySpreadsheetId ||
+      name !== local.historySpreadsheetName ||
+      tabName !== local.historySheetTabName
+    ) {
+      await setLocal({
+        historySpreadsheetId: shared.spreadsheetId,
+        historySpreadsheetName: name,
+        historySheetTabName: tabName,
+      });
     }
-    return true;
-  } catch (e) {
-    console.error('[DriveSync] Firebase publish threw:', e);
-    return false;
+    return { spreadsheetId: shared.spreadsheetId, sheetTabName: tabName };
   }
+  const local = await getLocal(['historySpreadsheetId', 'historySheetTabName']);
+  if (!local.historySpreadsheetId) return null;
+  return {
+    spreadsheetId: local.historySpreadsheetId,
+    sheetTabName: local.historySheetTabName ?? '',
+  };
 }
 
 // The lead-bought sheet is picked from the panel (which writes this node
 // directly via the Firebase SDK — see useGoogleSheetsSettings.ts), but this
 // device's own chrome.storage.local copy can be stale if another computer
 // picked a different sheet more recently. Same shared-pointer rationale as
-// getSharedHistorySpreadsheetId above, just for a different node.
-async function getSharedLeadSheet() {
-  try {
-    const res = await rtdbFetch('leadSheet');
-    if (!res) return null;
-    if (!res.ok) {
-      console.warn('[Sheets] Shared pointer read failed:', res.status);
-      return null;
-    }
-    const data = await res.json();
-    return data?.spreadsheetId ? data : null;
-  } catch (e) {
-    console.warn('[Sheets] Firebase lookup failed (non-fatal):', e);
-    return null;
-  }
+// resolveHistorySheet above, just for a different node.
+function getSharedLeadSheet() {
+  return getSharedSheetPointer('leadSheet', 'Sheets');
 }
 
 // Resolves the lead-bought sheet to write to, preferring the Firebase-shared
 // pointer over this device's own copy and keeping the local copy in step
-// (same pattern as ensureHistorySpreadsheet) so the panel doesn't lag behind
+// (same pattern as resolveHistorySheet) so the panel doesn't lag behind
 // a pick made on another computer.
 async function resolveLeadSheet() {
   const shared = await getSharedLeadSheet();
@@ -796,132 +804,89 @@ function assertOk(res, context, token) {
   if (!res.ok) throw new Error(`${context}: ${res.status}`);
 }
 
-// Creates "IndiaMART Lead History" in the user's own Drive, writes the header
-// row, and applies a protected range over it as an accidental-edit deterrent
-// — NOT a guarantee: the user owns this file and can always edit it or
-// remove the protection themselves.
-async function createHistorySpreadsheet(token) {
-  const createRes = await fetch(SHEETS_API_BASE, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ properties: { title: 'IndiaMART Lead History' } }),
-  });
-  assertOk(createRes, 'History sheet create failed', token);
-  const created = await createRes.json();
-  const spreadsheetId = created.spreadsheetId;
-  const sheet = created.sheets?.[0];
-  const sheetId = sheet?.properties?.sheetId ?? 0;
-  const tabName = sheet?.properties?.title ?? 'Sheet1';
+// Makes sure the chosen tab exists and carries the history header, mirroring
+// ensureTabAndHeader for the purchased-leads sheet. This is the write-path
+// safety net the history sync never had: previously the header was validated
+// once, at adopt time, and every append after that went in blind.
+//
+// Deliberately never creates a *spreadsheet*. Creation is an explicit user
+// action in the panel (useHistorySheetSettings.createSheet). The old code
+// created one here whenever it couldn't resolve a pointer, which made a denied
+// RTDB read indistinguishable from "no sheet configured" and produced a
+// duplicate spreadsheet on every computer.
+async function ensureHistoryTabAndHeader(token, spreadsheetId, tabName) {
+  if (historySpreadsheetCache && historySpreadsheetCache.id === spreadsheetId
+      && historySpreadsheetCache.tabName === tabName) {
+    return historySpreadsheetCache;
+  }
+
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const metaRes = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}?fields=properties.title,sheets.properties(sheetId,title)`,
+    { headers: authHeaders }
+  );
+  // 404 means the file is gone. Surface it rather than silently making a new
+  // one — the panel offers "New sheet" and "Choose existing" for exactly this.
+  if (metaRes.status === 404) {
+    const err = new Error('History sheet no longer exists');
+    err.reason = 'sheet-missing';
+    throw err;
+  }
+  assertOk(metaRes, 'History sheet metadata fetch failed', token);
+  const meta = await metaRes.json();
+
+  let sheet = (meta.sheets || []).find((s) => s.properties?.title === tabName);
+  if (!sheet) {
+    const addRes = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tabName } } }] }),
+    });
+    assertOk(addRes, 'History tab creation failed', token);
+    const added = await addRes.json();
+    sheet = { properties: added.replies?.[0]?.addSheet?.properties ?? { sheetId: 0, title: tabName } };
+  }
 
   const range = `${tabName}!A1:${String.fromCharCode(65 + LEAD_HISTORY_HEADER_ROW.length - 1)}1`;
-  const writeHeaderRes = await fetch(
-    `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
-    {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: [LEAD_HISTORY_HEADER_ROW] }),
-    }
+  const headerRes = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
+    { headers: authHeaders }
   );
-  assertOk(writeHeaderRes, 'History header write failed', token);
+  assertOk(headerRes, 'History header check failed', token);
+  const headerData = await headerRes.json();
 
-  try {
-    const protectRes = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}:batchUpdate`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requests: [
-          {
-            addProtectedRange: {
-              protectedRange: {
-                range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
-                description: 'IndiaMART Lead History header — do not edit',
-                warningOnly: true,
-              },
-            },
-          },
-        ],
-      }),
-    });
-    if (!protectRes.ok) console.warn('[DriveSync] Header protection request failed (non-fatal):', protectRes.status);
-  } catch (e) {
-    console.warn('[DriveSync] Failed to protect header row (non-fatal):', e);
+  if (!headerData.values || headerData.values.length === 0) {
+    const writeRes = await fetch(
+      `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [LEAD_HISTORY_HEADER_ROW] }),
+      }
+    );
+    assertOk(writeRes, 'History header write failed', token);
+  } else if (!historyHeaderMatches(headerData.values[0])) {
+    // Warn, don't block — the panel surfaces the same mismatch at tab-selection
+    // time, and overwriting a header the user put there would be worse than a
+    // visible misalignment they can fix.
+    console.warn(
+      `[History] Tab "${tabName}" header doesn't match the expected columns — rows may land misaligned.`,
+      headerData.values[0]
+    );
   }
 
-  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  historySpreadsheetCache = {
+    id: spreadsheetId,
+    sheetId: sheet.properties?.sheetId ?? 0,
+    tabName,
+  };
+  // Keep the local mirror honest about the file's current name, which is what
+  // the panel's "open sheet" link and label read.
   await setLocal({
     historySpreadsheetId: spreadsheetId,
-    historySpreadsheetUrl: url,
-    historySpreadsheetName: 'IndiaMART Lead History',
+    historySpreadsheetName: meta.properties?.title ?? '',
+    historySheetTabName: tabName,
   });
-  // Publish immediately so any other computer on this account converges onto
-  // this spreadsheet instead of creating its own — see
-  // getSharedHistorySpreadsheetId's comment for why this has to go through
-  // Firebase rather than chrome.storage.local.
-  await publishSharedHistorySpreadsheetId(spreadsheetId, url);
-
-  return { id: spreadsheetId, sheetId, tabName };
-}
-
-// Makes sure the dedicated history spreadsheet exists, creating it on first
-// use. Checks three sources in order: this worker's in-memory cache, then
-// the shared Firebase pointer (so a second computer finds what the first one
-// already created), then this device's own local storage as a last resort
-// before creating a new one. If the resolved id 404s (user trashed the
-// file), recreates it — moving/renaming the file elsewhere in Drive is
-// harmless since spreadsheetId is permanent and location-independent, so 404
-// is the only case that needs recovery here.
-async function ensureHistorySpreadsheet(token) {
-  if (historySpreadsheetCache) return historySpreadsheetCache;
-
-  const shared = await getSharedHistorySpreadsheetId();
-  let historySpreadsheetId = shared?.historySpreadsheetId;
-  // Remember whether the id came from the shared node or only from this
-  // device. A sheet created before the pointer could be written (rules, or an
-  // expired token) lives only in local storage, and without republishing it
-  // every other computer would go on creating its own forever.
-  const fromShared = Boolean(historySpreadsheetId);
-  if (!historySpreadsheetId) {
-    ({ historySpreadsheetId } = await getLocal(['historySpreadsheetId']));
-  }
-
-  if (historySpreadsheetId) {
-    const metaRes = await fetch(
-      // properties.title comes along for free here, which is also what keeps
-      // the displayed name current if the user renames the file in Drive.
-      `${SHEETS_API_BASE}/${historySpreadsheetId}?fields=properties.title,sheets.properties(sheetId,title)`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (metaRes.status === 404) {
-      console.warn('[DriveSync] History spreadsheet no longer exists — recreating.');
-    } else {
-      assertOk(metaRes, 'History sheet metadata fetch failed', token);
-      const meta = await metaRes.json();
-      const sheet = (meta.sheets || [])[0];
-      historySpreadsheetCache = {
-        id: historySpreadsheetId,
-        sheetId: sheet?.properties?.sheetId ?? 0,
-        tabName: sheet?.properties?.title ?? 'Sheet1',
-      };
-      // Keep this device's own local copy in step with whichever spreadsheet
-      // is actually canonical, even when it was another computer that
-      // created it — this is what the panel's "open sheet" link reads.
-      const historyUrl = `https://docs.google.com/spreadsheets/d/${historySpreadsheetId}/edit`;
-      await setLocal({
-        historySpreadsheetId,
-        historySpreadsheetUrl: historyUrl,
-        historySpreadsheetName: meta.properties?.title ?? 'IndiaMART Lead History',
-      });
-      // Self-heal: this id was only ever local, so seed the shared node with
-      // it now that the write can succeed. Whichever computer syncs first
-      // wins, and the rest converge onto it on their next sync.
-      if (!fromShared) {
-        await publishSharedHistorySpreadsheetId(historySpreadsheetId, historyUrl);
-      }
-      return historySpreadsheetCache;
-    }
-  }
-
-  historySpreadsheetCache = await createHistorySpreadsheet(token);
   return historySpreadsheetCache;
 }
 
@@ -1001,84 +966,6 @@ function resetSyncMarkers() {
       })
   );
 }
-
-// Points Drive Sync at a spreadsheet the user picked, and makes it canonical
-// for every computer on the account.
-//
-// The header row is only written when the target's first row is empty. An
-// existing sheet with its own headers is left alone and reported back as a
-// mismatch so the panel can warn — the same non-blocking treatment the
-// lead-bought sheet gives, since silently overwriting a user's header row
-// would be worse than a misaligned append they can see and fix.
-async function adoptHistorySpreadsheet(spreadsheetId) {
-  const token = await getSheetsAccessToken();
-  if (!token) return { ok: false, reason: 'not-connected' };
-
-  const metaRes = await fetch(
-    `${SHEETS_API_BASE}/${spreadsheetId}?fields=properties.title,sheets.properties(sheetId,title)`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (metaRes.status === 404) return { ok: false, reason: 'not-found' };
-  assertOk(metaRes, 'History sheet metadata fetch failed', token);
-  const meta = await metaRes.json();
-  const sheet = (meta.sheets || [])[0];
-  const sheetId = sheet?.properties?.sheetId ?? 0;
-  const tabName = sheet?.properties?.title ?? 'Sheet1';
-
-  const lastCol = String.fromCharCode(65 + LEAD_HISTORY_HEADER_ROW.length - 1);
-  const range = `${tabName}!A1:${lastCol}1`;
-  const headRes = await fetch(
-    `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  assertOk(headRes, 'History header check failed', token);
-  const head = await headRes.json();
-  const existing = head.values?.[0];
-
-  let headerMismatch = false;
-  if (!existing || existing.length === 0) {
-    const writeRes = await fetch(
-      `${SHEETS_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
-      {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: [LEAD_HISTORY_HEADER_ROW] }),
-      }
-    );
-    assertOk(writeRes, 'History header write failed', token);
-  } else {
-    headerMismatch = LEAD_HISTORY_HEADER_ROW.some((h, i) => existing[i] !== h);
-  }
-
-  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
-  const spreadsheetName = meta.properties?.title ?? 'Untitled spreadsheet';
-  historySpreadsheetCache = { id: spreadsheetId, sheetId, tabName };
-  await setLocal({
-    historySpreadsheetId: spreadsheetId,
-    historySpreadsheetUrl: url,
-    historySpreadsheetName: spreadsheetName,
-  });
-  const published = await publishSharedHistorySpreadsheetId(spreadsheetId, url);
-  await resetSyncMarkers();
-
-  return { ok: true, spreadsheetName, headerMismatch, published };
-}
-
-// Deliberately creates a brand-new history sheet, replacing whatever is
-// current. This is the "start fresh" / recovery path — it is the only way out
-// when the existing sheet became unreachable (access revoked returns 403, not
-// the 404 that ensureHistorySpreadsheet auto-recovers from).
-async function createFreshHistorySpreadsheet() {
-  const token = await getSheetsAccessToken();
-  if (!token) return { ok: false, reason: 'not-connected' };
-
-  historySpreadsheetCache = null;
-  const sheet = await createHistorySpreadsheet(token);
-  historySpreadsheetCache = sheet;
-  await resetSyncMarkers();
-  return { ok: true, spreadsheetName: 'IndiaMART Lead History' };
-}
-
 function getUnsyncedCount() {
   return openLeadsDB().then(
     (db) =>
@@ -1096,10 +983,21 @@ function getUnsyncedCount() {
 // left stale in the sheet (a user decision) — this file never clears
 // syncedAt on an existing record, so no re-sync happens for it.
 async function runDriveSyncOnce() {
+  // Resolve the destination before asking for a token: with no sheet chosen
+  // there is nothing to do, and this is the path that used to silently create
+  // one. Both are ordinary "not set up yet" states, not failures.
+  const pointer = await resolveHistorySheet();
+  if (!pointer?.spreadsheetId) return { ok: false, reason: 'no-sheet' };
+  if (!pointer.sheetTabName) return { ok: false, reason: 'no-tab' };
+
   const token = await getSheetsAccessToken();
   if (!token) return { ok: false, reason: 'not-connected' };
 
-  const sheet = await ensureHistorySpreadsheet(token);
+  const sheet = await ensureHistoryTabAndHeader(
+    token,
+    pointer.spreadsheetId,
+    pointer.sheetTabName
+  );
   const deviceId = await getOrCreateInstallId();
 
   let totalSynced = 0;
@@ -1170,25 +1068,16 @@ async function maybeStartDriveSync() {
 }
 
 async function getDriveSyncState() {
-  const {
-    lastDriveSyncAt = null,
-    historySpreadsheetId = null,
-    historySpreadsheetUrl = null,
-    historySpreadsheetName = null,
-  } = await getLocal([
-    'lastDriveSyncAt',
-    'historySpreadsheetId',
-    'historySpreadsheetUrl',
-    'historySpreadsheetName',
-  ]);
+  // Carries no sheet pointer. Which spreadsheet the history goes to is the
+  // panel's business, read live from RTDB by useHistorySheetSettings — this
+  // used to report the local mirror, so the panel could not actually tell
+  // whether the account had a sheet configured at all.
+  const { lastDriveSyncAt = null } = await getLocal(['lastDriveSyncAt']);
   const unsyncedCount = await getUnsyncedCount().catch(() => null);
   return {
     status: driveSyncInFlight ? 'syncing' : driveSyncLastError ? 'error' : 'idle',
     lastDriveSyncAt,
     unsyncedCount,
-    historySpreadsheetId,
-    historySpreadsheetUrl,
-    historySpreadsheetName,
     error: driveSyncLastError,
   };
 }
@@ -1316,23 +1205,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // async sendResponse
   }
 
-  // Both history-sheet changes reset every syncedAt marker, so they must not
-  // race a sync that is midway through marking a chunk against the *old*
-  // sheet — that would strand those rows as "synced" to a sheet no longer in
-  // use, the exact partial-history gap the reset exists to prevent.
-  if (message.type === 'SET_HISTORY_SHEET' || message.type === 'CREATE_HISTORY_SHEET') {
+  // The panel owns the history pointer and writes it to Firebase itself; it
+  // only tells the worker afterwards so two things can happen that must stay
+  // worker-side: dropping the metadata cache, and clearing the syncedAt
+  // markers. Those markers are per-lead, not per-sheet, so without the reset a
+  // newly chosen sheet would silently start mid-history.
+  //
+  // Skipped while a sync is in flight — resetting underneath a run that is
+  // midway through marking a chunk against the *old* sheet would strand those
+  // rows as "synced" to a sheet no longer in use.
+  if (message.type === 'HISTORY_SHEET_CHANGED') {
     if (driveSyncInFlight) {
       sendResponse({ ok: false, reason: 'already-syncing' });
       return true;
     }
-    const run =
-      message.type === 'CREATE_HISTORY_SHEET'
-        ? createFreshHistorySpreadsheet()
-        : adoptHistorySpreadsheet(message.spreadsheetId);
-    run
-      .then((res) => sendResponse(res))
+    historySpreadsheetCache = null;
+    resetSyncMarkers()
+      .then(() => sendResponse({ ok: true }))
       .catch((e) => {
-        console.error('[DriveSync] history sheet change failed:', e);
+        console.error('[History] sync marker reset failed:', e);
         sendResponse({
           ok: false,
           reason: 'failed',
@@ -1351,8 +1242,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           status: 'error',
           lastDriveSyncAt: null,
           unsyncedCount: null,
-          historySpreadsheetId: null,
-          historySpreadsheetUrl: null,
           error: String(e),
         });
       });

@@ -1,29 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DriveSyncState } from '@/types';
-import {
-  getDriveSyncState,
-  syncToDrive,
-  setHistorySheet,
-  createHistorySheet,
-  type SyncToDriveResult,
-  type HistorySheetResult,
-} from '@/lib/driveSync';
-import { openSheetPicker } from '@/lib/picker';
+import { getDriveSyncState, syncToDrive, type SyncToDriveResult } from '@/lib/driveSync';
 
 const INITIAL_STATE: DriveSyncState = {
   status: 'idle',
   lastDriveSyncAt: null,
   unsyncedCount: null,
-  historySpreadsheetId: null,
-  historySpreadsheetUrl: null,
-  historySpreadsheetName: null,
   error: null,
 };
 
-// Mirrors useGoogleSheetsSettings' shape: hydrate on mount, then stay live
-// via chrome.storage.onChanged so a background sync (the periodic alarm, or
-// the on-open staleness check the mount call below triggers) updates the
-// panel without polling.
+// Owns *when* the sync runs and how it went — nothing about *which* sheet it
+// writes to. That belongs to useHistorySheetSettings, which talks to Firebase
+// directly the way useGoogleSheetsSettings does.
+//
+// Keeping them apart is the point: the destination used to be created by the
+// sync itself, so a transient read failure was indistinguishable from "no
+// sheet yet" and each computer quietly made its own duplicate spreadsheet.
 export function useDriveSync() {
   const [state, setState] = useState<DriveSyncState>(INITIAL_STATE);
   const [busy, setBusy] = useState(false);
@@ -46,14 +38,7 @@ export function useDriveSync() {
       area: string
     ) => {
       if (area !== 'local') return;
-      if (
-        changes.lastDriveSyncAt ||
-        changes.historySpreadsheetId ||
-        changes.historySpreadsheetUrl ||
-        changes.historySpreadsheetName
-      ) {
-        refresh();
-      }
+      if (changes.lastDriveSyncAt) refresh();
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
@@ -82,43 +67,12 @@ export function useDriveSync() {
     setLastResult(null);
     setState((s) => ({ ...s, status: 'syncing' }));
     try {
-      const result = await syncToDrive();
-      setLastResult(result);
+      setLastResult(await syncToDrive());
     } finally {
       setBusy(false);
       refresh();
     }
   };
 
-  // Opens the shared picker, then hands the chosen id to the worker, which
-  // owns validation, the header row, publishing the shared pointer and
-  // resetting the sync markers. Returns null when the user cancels, so the
-  // caller can stay silent rather than reporting a non-error.
-  const pickHistorySheet = async (): Promise<HistorySheetResult | null> => {
-    setBusy(true);
-    try {
-      const picked = await openSheetPicker();
-      if (!picked.ok) {
-        return picked.reason === 'cancelled'
-          ? null
-          : { ok: false, reason: picked.reason ?? 'failed' };
-      }
-      return await setHistorySheet(picked.spreadsheetId);
-    } finally {
-      setBusy(false);
-      refresh();
-    }
-  };
-
-  const createNewHistorySheet = async (): Promise<HistorySheetResult> => {
-    setBusy(true);
-    try {
-      return await createHistorySheet();
-    } finally {
-      setBusy(false);
-      refresh();
-    }
-  };
-
-  return { ...state, busy, lastResult, sync, pickHistorySheet, createNewHistorySheet };
+  return { ...state, busy, lastResult, sync, refresh };
 }
