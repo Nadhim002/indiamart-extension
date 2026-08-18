@@ -2,7 +2,6 @@
   "manifest_version": 3,
   "name": "Indiamart Lead Notifier",
   "version": "1.5.1",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzY7gMPTawMxdCBZCLJhnwmXLS0nz5FXlYA0boI+KZJ+jMbbBIQR4DO8pioA0+toRuUfDVSola9vc5VePaKWQpdd8UhwgS0KUeyOKBILZXKbmMsya9f/KcsOtF+JRf/PKT0324bol5zb7p4Q1f2aUYWiK6CtVLJ5UQHYE0EZ6EAN3dCjQfWKY8O/t8BGJ5vV7UatYx4gqpSvnVY9aCvibzfN4WewytkWMs3hOdHqc3aPclvs4Pfgw5YIIm4+ALQltpbEYymWBOTUBjsnlbCh9t09ZaRUkIZ5va4oeAnCmsJ5uxHpPDzpwIerE7PiWRRYvSXqC0x+jSJ8GKNcyRyl76wIDAQAB",
   "description": "Monitor your IndiaMART seller buy-leads, get instant phone alerts for matches, and optionally auto-purchase them.",
   "permissions": [
     "sidePanel",
@@ -43,7 +42,7 @@
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://*.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://exp.host https://accounts.google.com https://oauth2.googleapis.com;"
   },
   "oauth2": {
-    "client_id": "797004741619-mm5bkfld3cuplsa1dgutt2fet06026g8.apps.googleusercontent.com",
+    "client_id": "797004741619-qgmsjp8q20mnnuekrr7vbchihpkd0838.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/drive.file",
       "openid",
