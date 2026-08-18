@@ -29,6 +29,7 @@ const STATE_OPTIONS = [
   "Assam",
   "Bihar",
   "Chhattisgarh",
+  "Delhi",
   "Goa",
   "Gujarat",
   "Haryana",
@@ -77,7 +78,7 @@ export default function DashboardPage({
   const { leadsBoughtToday } = useLeadsToday();
   const timer = useTimer();
   const devices = useAccountDevices(googleUser, entitlement);
-  const cityOptions = useKnownCities();
+  const knownCitiesByState = useKnownCities();
 
   const handleStart = () => {
     const payload = settings.buildStartPayload();
@@ -124,8 +125,7 @@ export default function DashboardPage({
     minPrice: settings.minPrice,
     minQuantity: settings.minQuantity,
     minTimePassed: settings.minTimePassed,
-    selectedStates: settings.selectedStates,
-    selectedCities: settings.selectedCities,
+    stateCities: settings.stateCities,
     includeKeywords: settings.includeKeywords,
     excludeKeywords: settings.excludeKeywords,
   });
@@ -195,12 +195,12 @@ export default function DashboardPage({
             setMinQuantity={settings.setMinQuantity}
             minTimePassed={settings.minTimePassed}
             setMinTimePassed={settings.setMinTimePassed}
-            selectedStates={settings.selectedStates}
+            stateCities={settings.stateCities}
             toggleStateSelection={settings.toggleStateSelection}
-            stateOptions={STATE_OPTIONS}
-            selectedCities={settings.selectedCities}
             toggleCitySelection={settings.toggleCitySelection}
-            cityOptions={cityOptions}
+            setStateCities={settings.setStateCities}
+            stateOptions={STATE_OPTIONS}
+            knownCitiesByState={knownCitiesByState}
             includeKeywords={settings.includeKeywords}
             setIncludeKeywords={settings.setIncludeKeywords}
             excludeKeywords={settings.excludeKeywords}

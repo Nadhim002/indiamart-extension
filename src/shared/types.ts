@@ -5,8 +5,12 @@ export interface LeadFilters {
   minPrice: number | null;
   minQuantity: number | null;
   minTimePassed: number | null;
-  states: string[] | null;
-  cities: string[] | null;
+  /** Selected states -> cities ticked under each. Empty array = whole state. */
+  stateCities: Record<string, string[]> | null;
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
+  states?: string[] | null;
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
+  cities?: string[] | null;
   includeKeywords: string[] | null;
   excludeKeywords: string[] | null;
 }

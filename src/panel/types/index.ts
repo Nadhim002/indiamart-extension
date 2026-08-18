@@ -8,7 +8,10 @@ export interface ExtensionSettings {
   minPrice?: string;
   minQuantity?: string;
   minTimePassed?: string;
+  stateCities?: Record<string, string[]>;
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
   selectedStates?: string[];
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
   selectedCities?: string[];
   includeKeywords?: string[];
   excludeKeywords?: string[];
@@ -34,7 +37,10 @@ export interface LeadFiltersAtFirstSeen {
   minPrice?: number | null;
   minQuantity?: number | null;
   minTimePassed?: number | null;
+  stateCities?: Record<string, string[]>;
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
   states?: string[];
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
   cities?: string[];
   includeKeywords?: string[];
   excludeKeywords?: string[];

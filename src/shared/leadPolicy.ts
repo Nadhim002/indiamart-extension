@@ -12,7 +12,7 @@ import type { EvaluableLead, LeadFilters } from './types';
 
 export function evaluateLead(lead: EvaluableLead, filters: LeadFilters): string[] {
   const reasons: string[] = [];
-  const { minPrice, minQuantity, minTimePassed, states, cities, includeKeywords, excludeKeywords } = filters;
+  const { minPrice, minQuantity, minTimePassed, stateCities, states, cities, includeKeywords, excludeKeywords } = filters;
 
   // Price OR Quantity — the check only applies if at least one threshold is set.
   if (minPrice != null || minQuantity != null) {
@@ -31,18 +31,31 @@ export function evaluateLead(lead: EvaluableLead, filters: LeadFilters): string[
     }
   }
 
-  // State — lead's state must be in the selected list.
-  if (states && states.length > 0) {
-    if (!states.includes(lead.GLUSR_STATE ?? '')) {
+  // Location — per-state scoping. `stateCities` maps each selected state to the
+  // cities ticked under it; an empty array means "whole state". Unlike the old
+  // two independent arrays, this shape makes an orphan city (one selected under
+  // no selected state, so it matched nothing) structurally impossible. Options
+  // are harvested from real leads (see knownCitiesByState in the worker), so
+  // exact-match is safe: the user never types a city, so a spelling can never
+  // diverge from IndiaMART's data.
+  if (stateCities && Object.keys(stateCities).length > 0) {
+    const scoped = stateCities[lead.GLUSR_STATE ?? ''];
+    if (scoped === undefined) {
+      reasons.push('State not selected');
+    } else if (scoped.length > 0 && !scoped.includes(lead.GLUSR_CITY ?? '')) {
+      reasons.push('City not selected');
+    }
+  } else if ((states && states.length > 0) || (cities && cities.length > 0)) {
+    // Legacy payload — a persisted autoStartPayload written before this version
+    // can auto-start the worker before the panel is ever opened (see
+    // maybeAutoStart in the service worker). Apply the old independent-AND
+    // rules so that one run behaves exactly as it did pre-update, rather than
+    // silently dropping the location filter entirely. onInstalled rewrites the
+    // payload, so this path is needed for at most one cycle.
+    if (states && states.length > 0 && !states.includes(lead.GLUSR_STATE ?? '')) {
       reasons.push('State not selected');
     }
-  }
-
-  // City — lead's city must be in the selected list. Options are harvested from
-  // real leads (see knownCities in the worker), so exact-match is safe: the user
-  // never types a city, so a spelling can never diverge from IndiaMART's data.
-  if (cities && cities.length > 0) {
-    if (!cities.includes(lead.GLUSR_CITY ?? '')) {
+    if (cities && cities.length > 0 && !cities.includes(lead.GLUSR_CITY ?? '')) {
       reasons.push('City not selected');
     }
   }

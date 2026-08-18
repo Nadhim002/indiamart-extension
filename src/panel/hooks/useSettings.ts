@@ -24,8 +24,11 @@ export function useSettings() {
   // Default OFF for purchasing: `testMode` true means notify-only (no buying).
   // Buying is an explicit opt-in the user must enable each install.
   const [testMode, setTestMode] = useState(true);
-  const [selectedStates, setSelectedStates] = useState<string[]>([]);
-  const [selectedCities, setSelectedCities] = useState<string[]>([]);
+  // Selected states -> cities ticked under each. Empty array = whole state.
+  // Replaces the old independent selectedStates/selectedCities arrays, which
+  // allowed picking a city under a state that wasn't selected — a combination
+  // that matched no leads. See migration in the load effect below.
+  const [stateCities, setStateCitiesState] = useState<Record<string, string[]>>({});
   const [includeKeywords, setIncludeKeywords] = useState<string[]>([]);
   const [excludeKeywords, setExcludeKeywords] = useState<string[]>([]);
 
@@ -38,8 +41,15 @@ export function useSettings() {
       if (saved.minPrice !== undefined) setMinPrice(saved.minPrice);
       if (saved.minQuantity !== undefined) setMinQuantity(saved.minQuantity);
       if (saved.minTimePassed !== undefined) setMinTimePassed(saved.minTimePassed);
-      if (saved.selectedStates !== undefined) setSelectedStates(saved.selectedStates);
-      if (saved.selectedCities !== undefined) setSelectedCities(saved.selectedCities);
+      if (saved.stateCities !== undefined) {
+        setStateCitiesState(saved.stateCities);
+      } else if (saved.selectedStates !== undefined) {
+        // Migrate silently from the old flat shape. selectedCities is
+        // discarded — it carried no state, so there's no safe way to know
+        // which state(s) it belonged to. Each previously selected state
+        // becomes a whole-state match until the user re-picks cities.
+        setStateCitiesState(Object.fromEntries(saved.selectedStates.map((state) => [state, []])));
+      }
       if (saved.includeKeywords !== undefined) setIncludeKeywords(saved.includeKeywords);
       if (saved.excludeKeywords !== undefined) setExcludeKeywords(saved.excludeKeywords);
       if (saved.phoneNumber !== undefined) setPhoneNumber(saved.phoneNumber);
@@ -59,8 +69,7 @@ export function useSettings() {
       minPrice,
       minQuantity,
       minTimePassed,
-      selectedStates,
-      selectedCities,
+      stateCities,
       includeKeywords,
       excludeKeywords,
       phoneNumber,
@@ -69,7 +78,7 @@ export function useSettings() {
       maxLeadsPerDay,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode, maxLeadsPerDayEnabled, maxLeadsPerDay]);
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, stateCities, includeKeywords, excludeKeywords, phoneNumber, testMode, maxLeadsPerDayEnabled, maxLeadsPerDay]);
 
   // Mirror the start payload into chrome.storage.local so the service worker
   // (no localStorage access) has an up-to-date copy to use for auto-start,
@@ -77,18 +86,32 @@ export function useSettings() {
   useEffect(() => {
     if (!loadedRef.current) return;
     chrome.storage.local.set({ autoStartPayload: buildStartPayload() });
-  }, [inputSeconds, minPrice, minQuantity, minTimePassed, selectedStates, selectedCities, includeKeywords, excludeKeywords, phoneNumber, testMode, maxLeadsPerDayEnabled, maxLeadsPerDay]);
+  }, [inputSeconds, minPrice, minQuantity, minTimePassed, stateCities, includeKeywords, excludeKeywords, phoneNumber, testMode, maxLeadsPerDayEnabled, maxLeadsPerDay]);
 
   const toggleStateSelection = (state: string) => {
-    setSelectedStates((current) =>
-      current.includes(state) ? current.filter((value) => value !== state) : [...current, state]
-    );
+    setStateCitiesState((current) => {
+      if (state in current) {
+        // Deselecting a state forgets its city picks immediately — there is
+        // nowhere for a city to be stored without its state, which is what
+        // keeps an orphan city selection structurally impossible.
+        const { [state]: _removed, ...rest } = current;
+        return rest;
+      }
+      return { ...current, [state]: [] };
+    });
   };
 
-  const toggleCitySelection = (city: string) => {
-    setSelectedCities((current) =>
-      current.includes(city) ? current.filter((value) => value !== city) : [...current, city]
-    );
+  const toggleCitySelection = (state: string, city: string) => {
+    setStateCitiesState((current) => {
+      const cities = current[state] ?? [];
+      const nextCities = cities.includes(city) ? cities.filter((value) => value !== city) : [...cities, city];
+      return { ...current, [state]: nextCities };
+    });
+  };
+
+  // Backs the "All" / "None" links in the nested city list.
+  const setStateCities = (state: string, cities: string[]) => {
+    setStateCitiesState((current) => ({ ...current, [state]: cities }));
   };
 
   // Build the START_TIMER payload from the current settings, or null if the
@@ -106,8 +129,7 @@ export function useSettings() {
       minPrice: minPriceValue != null && Number.isFinite(minPriceValue) && minPriceValue > 0 ? minPriceValue : null,
       minQuantity: minQuantityValue != null && Number.isFinite(minQuantityValue) && minQuantityValue > 0 ? minQuantityValue : null,
       minTimePassed: minTimePassedValue != null && Number.isFinite(minTimePassedValue) ? minTimePassedValue : null,
-      states: selectedStates.length ? selectedStates : null,
-      cities: selectedCities.length ? selectedCities : null,
+      stateCities: Object.keys(stateCities).length ? stateCities : null,
       includeKeywords: includeKeywords.length ? includeKeywords : null,
       excludeKeywords: excludeKeywords.length ? excludeKeywords : null,
     };
@@ -128,8 +150,7 @@ export function useSettings() {
     testMode, setTestMode,
     maxLeadsPerDayEnabled, setMaxLeadsPerDayEnabled,
     maxLeadsPerDay, setMaxLeadsPerDay,
-    selectedStates, setSelectedStates, toggleStateSelection,
-    selectedCities, setSelectedCities, toggleCitySelection,
+    stateCities, toggleStateSelection, toggleCitySelection, setStateCities,
     includeKeywords, setIncludeKeywords,
     excludeKeywords, setExcludeKeywords,
     buildStartPayload,

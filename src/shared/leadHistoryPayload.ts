@@ -45,7 +45,10 @@ export interface LeadHistoryFiltersSnapshot {
   minPrice?: number | null;
   minQuantity?: number | null;
   minTimePassed?: number | null;
+  stateCities?: Record<string, string[]> | null;
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
   states?: string[] | null;
+  /** @deprecated legacy shape, read-only — written by versions <= 1.5.0. */
   cities?: string[] | null;
   includeKeywords?: string[] | null;
   excludeKeywords?: string[] | null;
@@ -74,6 +77,14 @@ export interface LeadHistoryInput {
 
 export function buildLeadHistoryRow(lead: LeadHistoryInput, deviceId: string): (string | number)[] {
   const f = lead.filtersAtFirstSeen;
+  // Filter States / Filter Cities predate the state->city nesting and their
+  // format is frozen (see historyHeaderMatches — an already-synced sheet's
+  // header is never rewritten, only flagged as mismatched). A row from before
+  // this change still carries the flat `states`/`cities` arrays, so fall back
+  // to those; a new row derives the same two flat lists from `stateCities`.
+  const sc = f?.stateCities;
+  const filterStates = sc ? Object.keys(sc).join(' | ') : (f?.states?.join(' | ') ?? '');
+  const filterCities = sc ? Object.values(sc).flat().join(' | ') : (f?.cities?.join(' | ') ?? '');
   return [
     lead.ETO_OFR_ID,
     lead.ETO_OFR_TITLE ?? '',
@@ -90,8 +101,8 @@ export function buildLeadHistoryRow(lead: LeadHistoryInput, deviceId: string): (
     f?.minPrice ?? '',
     f?.minQuantity ?? '',
     f?.minTimePassed ?? '',
-    f?.states?.join(' | ') ?? '',
-    f?.cities?.join(' | ') ?? '',
+    filterStates,
+    filterCities,
     f?.includeKeywords?.join(' | ') ?? '',
     f?.excludeKeywords?.join(' | ') ?? '',
     deviceId,

@@ -531,28 +531,42 @@ async function upsertLead(record) {
   });
 }
 
-// Learn the real IndiaMART city spellings by harvesting them from leads as they
-// arrive. The panel's City filter offers only these observed cities, so the
-// user picks from correctly-spelled options instead of guessing.
+// Learn the real IndiaMART state+city spellings by harvesting them from leads
+// as they arrive, keyed by state so the panel's Cities picker can nest each
+// city under the state it actually belongs to (a flat list can't do that —
+// see knownCities, kept but no longer written, from before this change).
+// The panel's Cities filter offers only these observed cities, so the user
+// picks from correctly-spelled options instead of guessing.
 //
 // This touches only the current batch (already in memory), never the whole log:
-// one small read of knownCities per cycle, and a write ONLY when a never-seen
-// city appears — which is rare once the list is warm.
-async function harvestCities(leads) {
-  const seen = leads.map((l) => (l.GLUSR_CITY || '').trim()).filter(Boolean);
+// one small read of knownCitiesByState per cycle, and a write ONLY when a
+// never-seen state/city pair appears — which is rare once the map is warm.
+async function harvestCitiesByState(leads) {
+  const seen = leads
+    .map((l) => ({ state: (l.GLUSR_STATE || '').trim(), city: (l.GLUSR_CITY || '').trim() }))
+    .filter((p) => p.state && p.city);
   if (seen.length === 0) return;
-  const { knownCities = [] } = await getLocal(['knownCities']);
-  const set = new Set(knownCities);
+  const { knownCitiesByState = {} } = await getLocal(['knownCitiesByState']);
+  const map = {};
+  for (const state of Object.keys(knownCitiesByState)) {
+    map[state] = new Set(knownCitiesByState[state]);
+  }
   let changed = false;
-  for (const city of seen) {
-    if (!set.has(city)) {
-      set.add(city);
+  for (const { state, city } of seen) {
+    if (!map[state]) {
+      map[state] = new Set();
+    }
+    if (!map[state].has(city)) {
+      map[state].add(city);
       changed = true;
     }
   }
   if (!changed) return;
-  const sorted = Array.from(set).sort((a, b) => a.localeCompare(b));
-  await new Promise((resolve) => chrome.storage.local.set({ knownCities: sorted }, resolve));
+  const sorted = {};
+  for (const state of Object.keys(map)) {
+    sorted[state] = Array.from(map[state]).sort((a, b) => a.localeCompare(b));
+  }
+  await new Promise((resolve) => chrome.storage.local.set({ knownCitiesByState: sorted }, resolve));
 }
 
 async function getAllLeads() {
@@ -1631,7 +1645,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         if (results && results[0] && !results[0].error && results[0].result) {
           const { mappedData, filteredIds, purchasedIds = [], purchaseDetails = [] } = results[0].result;
           if (mappedData && filteredIds) {
-            harvestCities(mappedData).catch((err) => console.error('[Cities] harvest failed:', err));
+            harvestCitiesByState(mappedData).catch((err) => console.error('[Cities] harvest failed:', err));
             const filteredSet = new Set(filteredIds);
             const purchasedSet = new Set(purchasedIds);
             const now = new Date();
@@ -1738,6 +1752,23 @@ async function maybeAutoStartFromTab(tabId, url) {
     maxLeadsPerDay: autoStartPayload.maxLeadsPerDay,
   });
 }
+
+// A persisted autoStartPayload from <= 1.5.0 holds the old flat
+// states/cities. Rewrite it into the nested stateCities shape on update so
+// maybeAutoStart never has to rely on leadPolicy's legacy fallback beyond the
+// first moment. Cities are dropped (they carried no state), so each
+// previously selected state becomes a whole-state match — same tradeoff as
+// the settings migration in useSettings.
+chrome.runtime.onInstalled.addListener(async () => {
+  const { autoStartPayload } = await getLocal(['autoStartPayload']);
+  const filters = autoStartPayload?.filters;
+  if (!filters || filters.stateCities) return; // nothing saved, or already new-shape
+  const legacyStates = filters.states;
+  if (!legacyStates || legacyStates.length === 0) return;
+  const stateCities = Object.fromEntries(legacyStates.map((state) => [state, []]));
+  const migrated = { ...autoStartPayload, filters: { ...filters, stateCities, states: undefined, cities: undefined } };
+  chrome.storage.local.set({ autoStartPayload: migrated });
+});
 
 chrome.runtime.onStartup.addListener(() => {
   autoStartClaimed = false;

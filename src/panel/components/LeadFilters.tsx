@@ -2,6 +2,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import MultiSelect from '@/components/ui/multi-select';
 import TagInput from '@/components/ui/tag-input';
+import CityByStateSelect from '@/components/CityByStateSelect';
 
 interface LeadFiltersProps {
   minPrice: string;
@@ -10,12 +11,12 @@ interface LeadFiltersProps {
   setMinQuantity: (value: string) => void;
   minTimePassed: string;
   setMinTimePassed: (value: string) => void;
-  selectedStates: string[];
+  stateCities: Record<string, string[]>;
   toggleStateSelection: (state: string) => void;
+  toggleCitySelection: (state: string, city: string) => void;
+  setStateCities: (state: string, cities: string[]) => void;
   stateOptions: readonly string[];
-  selectedCities: string[];
-  toggleCitySelection: (city: string) => void;
-  cityOptions: readonly string[];
+  knownCitiesByState: Record<string, string[]>;
   includeKeywords: string[];
   setIncludeKeywords: (value: string[]) => void;
   excludeKeywords: string[];
@@ -30,12 +31,12 @@ export default function LeadFilters({
   setMinQuantity,
   minTimePassed,
   setMinTimePassed,
-  selectedStates,
+  stateCities,
   toggleStateSelection,
-  stateOptions,
-  selectedCities,
   toggleCitySelection,
-  cityOptions,
+  setStateCities,
+  stateOptions,
+  knownCitiesByState,
   includeKeywords,
   setIncludeKeywords,
   excludeKeywords,
@@ -87,23 +88,19 @@ export default function LeadFilters({
       <MultiSelect
         label="States"
         options={stateOptions}
-        selected={selectedStates}
+        selected={Object.keys(stateCities)}
         onToggle={toggleStateSelection}
         disabled={isRunning}
         placeholder="Any state"
         hint="No states = no filter"
       />
 
-      <MultiSelect
-        label="Cities"
-        options={cityOptions}
-        selected={selectedCities}
-        onToggle={toggleCitySelection}
+      <CityByStateSelect
+        stateCities={stateCities}
+        knownCitiesByState={knownCitiesByState}
+        onToggleCity={toggleCitySelection}
+        onSetStateCities={setStateCities}
         disabled={isRunning}
-        placeholder="Any city"
-        searchable
-        emptyText="No cities seen yet — they appear here as leads arrive."
-        hint="No cities = no filter"
       />
 
       <TagInput
