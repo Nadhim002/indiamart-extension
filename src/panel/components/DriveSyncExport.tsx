@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { User } from 'firebase/auth/web-extension';
-import { RefreshCw, ExternalLink, CheckCircle2, XCircle, FilePlus2, FolderOpen } from 'lucide-react';
+import { RefreshCw, ExternalLink, CheckCircle2, XCircle, FilePlus2, FolderOpen, BarChart3 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -8,6 +8,7 @@ import { useDriveSync } from '@/hooks/useDriveSync';
 import { useHistorySheetSettings } from '@/hooks/useHistorySheetSettings';
 import { describeSyncResult, describeSyncReason } from '@/lib/driveSync';
 import { describePickFailure } from '@/lib/picker';
+import { DASHBOARD_URL } from '@/lib/constants';
 import { LEAD_HISTORY_HEADER_ROW } from '@shared/leadHistoryPayload';
 
 function formatLastSync(ms: number | null): string {
@@ -268,6 +269,22 @@ export default function DriveSyncExport({ googleUser }: { googleUser: User }) {
         pushed to a Google Sheet you choose. Nothing is created automatically, and nothing is lost
         while no sheet is set up: recorded leads queue and are pushed on the first sync.
       </p>
+
+      {/* The payoff for setting this up, offered at the moment it's set up. A
+          raw spreadsheet is not what most sellers want to read; the dashboard
+          charts this same data. Shown only once a sheet exists, because there
+          is nothing to chart before that. */}
+      {connected && (
+        <a
+          href={DASHBOARD_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 text-xs text-primary underline"
+        >
+          <BarChart3 className="h-3.5 w-3.5" />
+          See charts from this data
+        </a>
+      )}
     </section>
   );
 }

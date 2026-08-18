@@ -93,6 +93,16 @@ async function sendLeadNotifications(purchasedLeads) {
 
   for (const lead of purchasedLeads) {
     const payload = {
+      // The IndiaMART lead id — the only stable identifier a lead has, and the
+      // join key back to IndexedDB, the history sheet, and IndiaMART itself.
+      // It was missing from this payload originally, so records written before
+      // this line was added are anonymous in RTDB and have to be repaired from
+      // a machine that still holds the local history — see
+      // scripts/backfill-lead-ids.js.
+      // Written raw, exactly as it sits in IndexedDB and the sheets export —
+      // same source (`item.ETO_OFR_ID` off DisplayList), so no path coerces it
+      // differently and the values stay joinable.
+      ETO_OFR_ID: lead.ETO_OFR_ID ?? null,
       title: lead.ETO_OFR_TITLE ?? 'New Lead',
       buyerName: lead.buyerName ?? null,
       buyerMobile: lead.buyerMobile ?? null,
