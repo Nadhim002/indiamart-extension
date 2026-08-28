@@ -61,7 +61,15 @@ export function useHistorySheetSettings(user: User) {
   // exactly like success — the user believed the sheet was shared while every
   // other computer read null and created its own.
   const publishHistorySheet = (id: string, name: string, tabName: string) => {
-    if (!key) return;
+    if (!key) {
+      // Returning silently here loses the user's choice with no feedback at
+      // all: adopt() has already written chrome.storage.local, so the panel
+      // looks configured while the shared node keeps whatever it had — and the
+      // worker reads the shared node. Same user-visible consequence as a failed
+      // write, so it gets the same message.
+      setSyncError(SYNC_WRITE_FAILED);
+      return;
+    }
     lastPublishedRef.current = pointerKey(id, name, tabName);
     // Node name stays `driveSync` because the deployed security rules already
     // carve it out; the field names match leadSheet's so both pointers read

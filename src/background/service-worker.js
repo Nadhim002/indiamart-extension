@@ -591,6 +591,14 @@ async function getAllLeads() {
 
 const DRIVE_SYNC_CHUNK_SIZE = 500;
 const DRIVE_SYNC_STALE_MS = 24 * 60 * 60 * 1000;
+// Backoff between *attempts*, as opposed to between successes. The panel polls
+// GET_DRIVE_SYNC_STATE every 3s while it believes a sync is running, and that
+// handler also fires maybeStartDriveSync() — so a staleness check that only
+// looks at the last success re-triggers a failing sync on every poll, forever.
+// Short enough that a transient failure (expired token, offline) retries
+// promptly; long enough that a permanent one (no-tab, not-connected) stops
+// hammering.
+const DRIVE_SYNC_RETRY_MS = 5 * 60 * 1000;
 
 let driveSyncInFlight = false;
 let driveSyncLastError = null;
@@ -734,7 +742,18 @@ async function resolveHistorySheet() {
     ]);
     // RTDB omits null-valued keys, so an older node may lack either field.
     const name = shared.spreadsheetName ?? '';
-    const tabName = shared.sheetTabName ?? '';
+    // A shared pointer can name a spreadsheet but carry no tab — the panel
+    // publishes the id and the tab in one write, but publishHistorySheet is a
+    // no-op without a signed-in account key, so a half-configured node is a
+    // real state. Treat an empty shared tab as "no opinion", not as an
+    // instruction to forget the tab this device already knows: overwriting it
+    // strands the worker in a permanent `no-tab` failure with no way back,
+    // since the local fallback below is unreachable once spreadsheetId is set.
+    // Only inherit the local tab when it belongs to the *same* spreadsheet —
+    // carrying a tab name across a sheet change would append to the wrong tab.
+    const sharedTab = shared.sheetTabName ?? '';
+    const sameSheet = shared.spreadsheetId === local.historySpreadsheetId;
+    const tabName = sharedTab || (sameSheet ? (local.historySheetTabName ?? '') : '');
     if (
       shared.spreadsheetId !== local.historySpreadsheetId ||
       name !== local.historySpreadsheetName ||
@@ -1069,6 +1088,12 @@ async function syncLeadsToDrive() {
     return { ok: false, reason: 'failed', error: driveSyncLastError };
   } finally {
     driveSyncInFlight = false;
+    // Every attempt is recorded, successful or not. `lastDriveSyncAt` stays
+    // "last success" because the panel shows it to the user as such — writing
+    // it here would claim a sync that never happened. The retry backoff needs a
+    // separate mark, or a permanently failing sync gets re-armed by every
+    // GET_DRIVE_SYNC_STATE the panel sends.
+    await setLocal({ lastDriveSyncAttemptAt: Date.now() });
   }
 }
 
@@ -1077,8 +1102,18 @@ async function syncLeadsToDrive() {
 // mount is the only reliable wake signal, so that handler calls this.
 async function maybeStartDriveSync() {
   if (driveSyncInFlight) return;
-  const { lastDriveSyncAt } = await getLocal(['lastDriveSyncAt']);
-  if (lastDriveSyncAt && Date.now() - lastDriveSyncAt < DRIVE_SYNC_STALE_MS) return;
+  const { lastDriveSyncAt, lastDriveSyncAttemptAt } = await getLocal([
+    'lastDriveSyncAt',
+    'lastDriveSyncAttemptAt',
+  ]);
+  const now = Date.now();
+  // Two independent brakes. The success mark answers "is the sheet stale
+  // enough to be worth a run?"; the attempt mark answers "did we just try?".
+  // Without the second one the panel's 3s poll re-triggers a failing sync
+  // indefinitely — which reads to the user as a sync that hangs forever, with
+  // nothing in the console because no-tab/not-connected return silently.
+  if (lastDriveSyncAt && now - lastDriveSyncAt < DRIVE_SYNC_STALE_MS) return;
+  if (lastDriveSyncAttemptAt && now - lastDriveSyncAttemptAt < DRIVE_SYNC_RETRY_MS) return;
   await syncLeadsToDrive();
 }
 
@@ -1087,13 +1122,20 @@ async function getDriveSyncState() {
   // panel's business, read live from RTDB by useHistorySheetSettings — this
   // used to report the local mirror, so the panel could not actually tell
   // whether the account had a sheet configured at all.
+  // Snapshot both flags before any await. The GET_DRIVE_SYNC_STATE handler fires
+  // maybeStartDriveSync() alongside this call, so reading them *after* the I/O
+  // below reports the run this very request started — and 'syncing' then masks
+  // the error that run is about to fail with, which is how a permanent no-tab
+  // failure presented as an endless spinner with a clean console.
+  const inFlight = driveSyncInFlight;
+  const lastError = driveSyncLastError;
   const { lastDriveSyncAt = null } = await getLocal(['lastDriveSyncAt']);
   const unsyncedCount = await getUnsyncedCount().catch(() => null);
   return {
-    status: driveSyncInFlight ? 'syncing' : driveSyncLastError ? 'error' : 'idle',
+    status: inFlight ? 'syncing' : lastError ? 'error' : 'idle',
     lastDriveSyncAt,
     unsyncedCount,
-    error: driveSyncLastError,
+    error: lastError,
   };
 }
 
