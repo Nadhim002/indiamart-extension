@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Indiamart Lead Notifier",
-  "version": "1.5.1",
+  "version": "1.5.3",
   "description": "Monitor your IndiaMART seller buy-leads, get instant phone alerts for matches, and optionally auto-purchase them.",
   "permissions": [
     "sidePanel",

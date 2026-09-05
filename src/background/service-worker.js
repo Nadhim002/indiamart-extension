@@ -113,10 +113,19 @@ async function sendLeadNotifications(purchasedLeads) {
       timestamp: Date.now(),
     };
 
-    // Write to Firebase so phone's real-time listener also picks it up
+    // Write to Firebase so phone's real-time listener also picks it up.
+    // Keyed by lead id (PUT) rather than a fresh push id (POST) so a repeat
+    // write of the same lead overwrites in place instead of accumulating —
+    // see docs/adr or the RCA this guards against: a lead re-notified every
+    // timer tick used to mint a brand-new node each time. Falls back to POST
+    // (old push-id behaviour) only when a lead has no id to key on.
     try {
-      await fetch(`${DB_URL}/accounts/${accountKey}/leads/new.json?auth=${googleIdToken}`, {
-        method: 'POST',
+      const leadId = lead.ETO_OFR_ID != null ? String(lead.ETO_OFR_ID) : null;
+      const url = leadId
+        ? `${DB_URL}/accounts/${accountKey}/leads/new/${encodeURIComponent(leadId)}.json?auth=${googleIdToken}`
+        : `${DB_URL}/accounts/${accountKey}/leads/new.json?auth=${googleIdToken}`;
+      await fetch(url, {
+        method: leadId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -1191,6 +1200,83 @@ async function incrementTodayLeadCount(by) {
   await setLocal({ leadsBoughtToday: { date: today, count: current + by } });
 }
 
+// Circuit breaker for IndiaMART purchase rejections. RCA: a matched lead
+// IndiaMART rejects (in practice this is the account's weekly lead-credit
+// balance running dry — see the investigation notes) never leaves the fixed
+// getBLDisplayData window on its own, so without this it gets re-attempted
+// on every single timer tick — one real account generated ~33k rejected
+// writes across a handful of afternoons this way. Trips after
+// BREAKER_TRIP_THRESHOLD distinct leads are rejected back-to-back (with no
+// success in between); once tripped, only one lead is attempted per
+// BREAKER_COOLDOWN_MS as a probe for credits being restored. Any success
+// resets it immediately. Persisted (not module-scope) so it survives the
+// frequent MV3 service-worker restarts and so the panel can read it via
+// chrome.storage.onChanged, same pattern as leadsBoughtToday.
+const BREAKER_TRIP_THRESHOLD = 5;
+const BREAKER_COOLDOWN_MS = 10 * 60 * 1000;
+
+async function getPurchaseGate() {
+  const { purchaseBreaker, purchaseAttempts } = await getLocal(['purchaseBreaker', 'purchaseAttempts']);
+  const today = todayIso();
+  const attemptCounts =
+    purchaseAttempts && purchaseAttempts.date === today ? purchaseAttempts.ids || {} : {};
+
+  if (!purchaseBreaker?.tripped) {
+    return { attemptCounts, allowAttempts: true, probeOnly: false };
+  }
+
+  const elapsed = purchaseBreaker.lastAttemptAt ? Date.now() - purchaseBreaker.lastAttemptAt : Infinity;
+  if (elapsed < BREAKER_COOLDOWN_MS) {
+    return { attemptCounts, allowAttempts: false, probeOnly: false };
+  }
+  // Cooldown elapsed — allow exactly one lead through as a probe.
+  return { attemptCounts, allowAttempts: true, probeOnly: true };
+}
+
+// Called once per tick with what injectedFetchAndBuy actually attempted.
+// Updates both the per-lead attempt counter (used by the per-lead cap) and
+// the breaker (used by the account-wide gate above).
+async function recordPurchaseOutcome({ succeededIds = [], failedIds = [], attemptedIds = [] }) {
+  if (failedIds.length > 0) {
+    const today = todayIso();
+    const { purchaseAttempts } = await getLocal(['purchaseAttempts']);
+    const ids = purchaseAttempts && purchaseAttempts.date === today ? { ...purchaseAttempts.ids } : {};
+    for (const id of failedIds) {
+      ids[String(id)] = (ids[String(id)] || 0) + 1;
+    }
+    await setLocal({ purchaseAttempts: { date: today, ids } });
+  }
+
+  // Nothing was actually attempted this tick (breaker fully blocked it) —
+  // leave breaker state untouched so its cooldown clock keeps counting from
+  // the last real attempt, not from a tick that never called contactBuyNow.
+  if (attemptedIds.length === 0) return;
+
+  if (succeededIds.length > 0) {
+    await setLocal({
+      purchaseBreaker: { tripped: false, failedIds: [], trippedAt: null, lastAttemptAt: Date.now() },
+    });
+    return;
+  }
+
+  if (failedIds.length === 0) return;
+
+  const { purchaseBreaker } = await getLocal(['purchaseBreaker']);
+  const prevFailed = purchaseBreaker?.failedIds || [];
+  const merged = new Set(prevFailed.map(String));
+  for (const id of failedIds) merged.add(String(id));
+
+  const tripped = purchaseBreaker?.tripped || merged.size >= BREAKER_TRIP_THRESHOLD;
+  await setLocal({
+    purchaseBreaker: {
+      tripped,
+      failedIds: [...merged],
+      trippedAt: tripped ? purchaseBreaker?.trippedAt || Date.now() : null,
+      lastAttemptAt: Date.now(),
+    },
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
 
@@ -1336,13 +1422,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // session). Fetches buy-leads, maps + filters them, and — only when
 // `enableLeadBuying` — purchases up to `remainingSlots` of the matching leads
 // (Infinity when no daily cap is set). Returns { mappedData, filteredIds,
-// purchasedIds, purchaseDetails } to the worker — filteredIds is everything
-// that matched, purchasedIds is the subset actually bought, so the worker can
-// tell "matched but capped" apart from "purchased". Self-contained: it may
-// only use its args and page globals (window.__im_utils,
-// fetchGlidScriptJSFile), never module-scope vars. Shared by the alarm tick
-// and the TEST_REAL_LEAD handler.
-async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remainingSlots) {
+// purchasedIds, purchaseDetails, failedIds, failedDetails, attemptedIds } to
+// the worker — filteredIds is everything that matched, purchasedIds is the
+// subset genuinely bought (IndiaMART returned Status:'Success'), failedIds is
+// the subset IndiaMART rejected (e.g. lead credits exhausted), and
+// attemptedIds is every id contactBuyNow was actually called for this tick
+// (a subset of leadsToBuy — the breaker/per-lead-cap gate below can attempt
+// fewer than requested). purchasedIds vs "matched but capped" vs "attempted
+// but rejected" are three different things and the worker needs to tell them
+// apart. Self-contained: it may only use its args and page globals
+// (window.__im_utils, fetchGlidScriptJSFile), never module-scope vars.
+// Shared by the alarm tick and the TEST_REAL_LEAD handler.
+//
+// `gate` (optional) is the circuit-breaker/per-lead-attempt state computed by
+// getPurchaseGate() in the worker: { attemptCounts, allowAttempts, probeOnly }.
+// See the RCA this guards against — a lead IndiaMART keeps rejecting (e.g.
+// while the account is out of lead credits) was retried on every tick
+// forever, each rejection still written to RTDB/Sheets as if bought.
+async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remainingSlots, gate) {
   try {
     if (typeof fetchGlidScriptJSFile === 'function') {
 
@@ -1478,10 +1575,34 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
       // daily quota (Infinity = no cap). filteredLeads stays untouched so the
       // worker still knows which leads matched, even the ones skipped here.
       const slots = Number.isFinite(remainingSlots) ? remainingSlots : Infinity;
-      const leadsToBuy = enableLeadBuying ? filteredLeads.slice(0, Math.max(0, slots)) : [];
-      console.log(`[Purchase] Buying ${leadsToBuy.length} / ${filteredLeads.length} matched leads (remaining daily slots: ${slots})`);
+      let candidates = enableLeadBuying ? filteredLeads.slice(0, Math.max(0, slots)) : [];
+
+      // Per-lead attempt cap: a lead IndiaMART has already rejected
+      // MAX_ATTEMPTS_PER_LEAD times today stays in filteredLeads (still shown
+      // as matched) but is never retried — it never leaves the fixed
+      // start:1/end:200 window on its own, so without this it would be
+      // reattempted every tick indefinitely.
+      const MAX_ATTEMPTS_PER_LEAD = 3;
+      const attemptCounts = gate?.attemptCounts || {};
+      candidates = candidates.filter(
+        (l) => (attemptCounts[String(l.ETO_OFR_ID)] || 0) < MAX_ATTEMPTS_PER_LEAD
+      );
+
+      // Circuit breaker: once too many distinct leads have been rejected in a
+      // row (see getPurchaseGate/recordPurchaseOutcome in the worker — almost
+      // always IndiaMART's lead-credit balance running out), stop hammering
+      // contactBuyNow every tick. Once tripped, only a single lead is
+      // attempted per cooldown window, as a probe for credits being restored.
+      let leadsToBuy = candidates;
+      if (gate?.allowAttempts === false) {
+        leadsToBuy = [];
+      } else if (gate?.probeOnly) {
+        leadsToBuy = candidates.slice(0, 1);
+      }
+      console.log(`[Purchase] Buying ${leadsToBuy.length} / ${filteredLeads.length} matched leads (remaining daily slots: ${slots}${gate?.allowAttempts === false ? ', breaker tripped' : gate?.probeOnly ? ', breaker probe' : ''})`);
 
       let purchaseDetails = [];
+      let failedDetails = [];
       if (enableLeadBuying && leadsToBuy.length > 0) {
         const now = new Date();
         const ptime = `${String(now.getDate()).padStart(2,'0')}-${String(now.getMonth()+1).padStart(2,'0')}-${now.getFullYear()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
@@ -1553,33 +1674,49 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
           }
         });
 
-        // Extract buyer contact info from purchase response to pass back to service worker
-        purchaseDetails = purchaseData
-          .filter(({ data }) => data != null)
-          .map(({ lead, data }) => {
-            // contactBuyNow returns buyer details nested under Data[0] on
-            // success, e.g. { Status: 'Success', Flag: '1', Data: [ {...} ] }.
-            const ok = data?.Status === 'Success' && data?.Flag === '1';
-            const detail = ok && Array.isArray(data?.Data) ? data.Data[0] : null;
+        // Split into genuinely-succeeded vs rejected purchases. `data != null`
+        // only means IndiaMART's HTTP response parsed — a rejection (out of
+        // lead credits, daily limit, already purchased, ...) is still a
+        // parsed body with Status !== 'Success', and previously fell through
+        // this filter and was written to RTDB/Sheets as if bought. `ok` must
+        // gate which bucket a row goes in, not just whether to extract buyer
+        // details from it.
+        for (const { lead, data } of purchaseData) {
+          if (data == null) continue; // network/parse failure — not a lead-level rejection, drop silently as before
 
-            return {
+          // contactBuyNow returns buyer details nested under Data[0] on
+          // success, e.g. { Status: 'Success', Flag: '1', Data: [ {...} ] }.
+          const ok = data?.Status === 'Success' && data?.Flag === '1';
+
+          if (!ok) {
+            failedDetails.push({
               ETO_OFR_ID: lead.ETO_OFR_ID,
-              ETO_OFR_TITLE: lead.ETO_OFR_TITLE,
-              ETO_OFR_APPROX_ORDER_VALUE: lead.ETO_OFR_APPROX_ORDER_VALUE,
-              quantity: lead.quantity,
-              GLUSR_CITY: lead.GLUSR_CITY,
-              GLUSR_STATE: lead.GLUSR_STATE,
-              buyerMobile:
-                detail?.GLUSR_USR_PH_MOBILE ??
-                detail?.GLUSR_USR_PH_MOBILE_ALT ??
-                null,
-              buyerMobileCountry: detail?.GLUSR_USR_MOBILE_COUNTRY ?? null,
-              buyerName: detail?.GLUSR_NAME ?? null,
-              // The moment the purchase actually happened, for the Sheets export row.
-              boughtDate: now.toISOString().slice(0, 10),
-              boughtTime: now.toTimeString().slice(0, 8),
-            };
+              status: data?.Status ?? null,
+              flag: data?.Flag ?? null,
+              message: data?.Message ?? null,
+            });
+            continue;
+          }
+
+          const detail = Array.isArray(data?.Data) ? data.Data[0] : null;
+          purchaseDetails.push({
+            ETO_OFR_ID: lead.ETO_OFR_ID,
+            ETO_OFR_TITLE: lead.ETO_OFR_TITLE,
+            ETO_OFR_APPROX_ORDER_VALUE: lead.ETO_OFR_APPROX_ORDER_VALUE,
+            quantity: lead.quantity,
+            GLUSR_CITY: lead.GLUSR_CITY,
+            GLUSR_STATE: lead.GLUSR_STATE,
+            buyerMobile:
+              detail?.GLUSR_USR_PH_MOBILE ??
+              detail?.GLUSR_USR_PH_MOBILE_ALT ??
+              null,
+            buyerMobileCountry: detail?.GLUSR_USR_MOBILE_COUNTRY ?? null,
+            buyerName: detail?.GLUSR_NAME ?? null,
+            // The moment the purchase actually happened, for the Sheets export row.
+            boughtDate: now.toISOString().slice(0, 10),
+            boughtTime: now.toTimeString().slice(0, 8),
           });
+        }
       }
 
       // `result` is the seller's glusrid — identifying, and this console is
@@ -1589,8 +1726,16 @@ async function injectedFetchAndBuy(filters, phoneNumber, enableLeadBuying, remai
       return {
         mappedData,
         filteredIds: filteredLeads.map((l) => l.ETO_OFR_ID),
-        purchasedIds: leadsToBuy.map((l) => l.ETO_OFR_ID),
+        // Genuinely bought only — was leadsToBuy.map(...), i.e. "attempted",
+        // which stamped rejected purchases as 'Purchased' and burned daily
+        // quota for leads never actually bought. See failedDetails for what
+        // was attempted-and-rejected, and attemptedIds for everything
+        // contactBuyNow was called for this tick (bought or rejected).
+        purchasedIds: purchaseDetails.map((d) => d.ETO_OFR_ID),
         purchaseDetails,
+        failedIds: failedDetails.map((d) => d.ETO_OFR_ID),
+        failedDetails,
+        attemptedIds: leadsToBuy.map((l) => l.ETO_OFR_ID),
       };
     } else {
       console.warn(
@@ -1669,12 +1814,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       const remainingSlotsPromise = (buyingActive && activeMaxLeadsPerDay)
         ? getTodayLeadCount().then((count) => Math.max(0, activeMaxLeadsPerDay - count))
         : Promise.resolve(null);
+      const gatePromise = buyingActive ? getPurchaseGate() : Promise.resolve(null);
 
-      remainingSlotsPromise.then((remainingSlots) => {
+      Promise.all([remainingSlotsPromise, gatePromise]).then(([remainingSlots, gate]) => {
       chrome.scripting.executeScript({
         target: { tabId: activeTabId },
         world: 'MAIN',
-        args: [activeFilters, activePhoneNumber, buyingActive, remainingSlots],
+        args: [activeFilters, activePhoneNumber, buyingActive, remainingSlots, gate],
         func: injectedFetchAndBuy
       }, (results) => {
         if (chrome.runtime.lastError) {
@@ -1685,11 +1831,24 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         }
 
         if (results && results[0] && !results[0].error && results[0].result) {
-          const { mappedData, filteredIds, purchasedIds = [], purchaseDetails = [] } = results[0].result;
+          const {
+            mappedData,
+            filteredIds,
+            purchasedIds = [],
+            purchaseDetails = [],
+            failedIds = [],
+            failedDetails = [],
+            attemptedIds = [],
+          } = results[0].result;
           if (mappedData && filteredIds) {
             harvestCitiesByState(mappedData).catch((err) => console.error('[Cities] harvest failed:', err));
             const filteredSet = new Set(filteredIds);
             const purchasedSet = new Set(purchasedIds);
+            // Rejected by IndiaMART this tick (e.g. lead credits exhausted) —
+            // distinct from "matched but not attempted" (daily cap/breaker/
+            // buying disabled). See the RCA: these used to be silently
+            // stamped 'Purchased' and written to RTDB/Sheets like a real buy.
+            const failedMap = new Map(failedDetails.map((d) => [d.ETO_OFR_ID, d]));
             const now = new Date();
             const firstSeenDate = now.toISOString().slice(0, 10);
             const firstSeenTime = now.toTimeString().slice(0, 8);
@@ -1698,9 +1857,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
             mappedData.forEach((lead) => {
               const isMatched = filteredSet.has(lead.ETO_OFR_ID);
               const isPurchased = purchasedSet.has(lead.ETO_OFR_ID);
+              const failure = failedMap.get(lead.ETO_OFR_ID);
               let reasons;
               if (isPurchased) {
                 reasons = 'Purchased';
+              } else if (failure) {
+                reasons = `Purchase failed (${failure.status ?? failure.message ?? 'rejected'})`;
               } else if (isMatched) {
                 reasons = buyingActive
                   ? 'Matched (daily cap reached)'
@@ -1731,6 +1893,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
             if (ENABLE_LEAD_BUYING && purchaseDetails.length > 0) {
               sendLeadNotifications(purchaseDetails);
               writeLeadsToSheet(purchaseDetails);
+            }
+
+            if (buyingActive) {
+              recordPurchaseOutcome({ succeededIds: purchasedIds, failedIds, attemptedIds })
+                .catch((err) => console.error('[Breaker] recordPurchaseOutcome failed:', err));
             }
           }
         }

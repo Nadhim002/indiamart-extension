@@ -25,3 +25,9 @@ package-lock.json
 # Optional environment files
 .env
 .env.*
+
+# Local database snapshots — contain customer PII, never commit
+backups/
+
+# Lead-history sheet exports — contain per-lead buyer/location data, never commit
+IndiaMART Lead History*.csv

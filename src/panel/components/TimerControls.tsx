@@ -16,6 +16,7 @@ interface TimerControlsProps {
   maxLeadsPerDay: string;
   setMaxLeadsPerDay: (value: string) => void;
   leadsBoughtToday: number;
+  purchasingBlocked?: boolean;
   isRunning: boolean;
   onStart: () => void;
   onStop: () => void;
@@ -35,6 +36,7 @@ export default function TimerControls({
   maxLeadsPerDay,
   setMaxLeadsPerDay,
   leadsBoughtToday,
+  purchasingBlocked,
   isRunning,
   onStart,
   onStop,
@@ -167,6 +169,14 @@ export default function TimerControls({
           automatically on IndiaMART using your account balance — no per-lead
           confirmation. Turn off "Enable auto-purchase" above to preview matches
           without buying.
+        </p>
+      )}
+
+      {!testMode && purchasingBlocked && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-900 dark:bg-red-950 dark:text-red-200">
+          IndiaMART is rejecting purchases — most likely your lead credits are
+          exhausted. Buying has paused itself and is checking periodically;
+          it'll resume automatically once credits are available again.
         </p>
       )}
 

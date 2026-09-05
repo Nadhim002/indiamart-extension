@@ -16,6 +16,7 @@ import type { Entitlement } from "@shared/types";
 import { useSettings } from "@/hooks/useSettings";
 import { useAutoStartSetting } from "@/hooks/useAutoStartSetting";
 import { useLeadsToday } from "@/hooks/useLeadsToday";
+import { usePurchaseBreaker } from "@/hooks/usePurchaseBreaker";
 import { useTimer } from "@/hooks/useTimer";
 import { useAccountDevices } from "@/hooks/useAccountDevices";
 import { useKnownCities } from "@/hooks/useKnownCities";
@@ -76,6 +77,7 @@ export default function DashboardPage({
   const settings = useSettings();
   const autoStart = useAutoStartSetting();
   const { leadsBoughtToday } = useLeadsToday();
+  const { purchasingBlocked } = usePurchaseBreaker();
   const timer = useTimer();
   const devices = useAccountDevices(googleUser, entitlement);
   const knownCitiesByState = useKnownCities();
@@ -174,6 +176,7 @@ export default function DashboardPage({
             maxLeadsPerDay={settings.maxLeadsPerDay}
             setMaxLeadsPerDay={settings.setMaxLeadsPerDay}
             leadsBoughtToday={leadsBoughtToday}
+            purchasingBlocked={purchasingBlocked}
             isRunning={timer.isRunning}
             onStart={handleStart}
             onStop={timer.stop}
